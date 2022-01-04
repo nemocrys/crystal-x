@@ -162,7 +162,7 @@ dmypy.json
 *.out
 *.app
  
- # LaTeX
+# LaTeX
 *.aux
 *.glo
 *.idx
@@ -241,3 +241,6 @@ documentation/latex/*
 # Results
 */results/
 results/
+
+
+.bash_history
