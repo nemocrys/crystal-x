@@ -12,6 +12,7 @@ TODO create own Dockerfile for all this
 by M. Schröder, A. Enders-Seidlitz, B. E. Abali, K. Dadzis
 """
 
+
 #####################################################################################################
 #                                                                                                   #
 #                                          IMPORTS                                                  #
@@ -27,6 +28,8 @@ import yaml
 # DOLFINx Imports
 import dolfinx
 import ufl
+from petsc4py import PETSc
+from mpi4py import MPI
 
 #---------------------------------------------------------------------------------------------------#
 
@@ -38,7 +41,15 @@ from geometry.gmsh_helpers import gmsh_model_to_mesh
 #---------------------------------------------------------------------------------------------------#
 
 # crystal-x Imports
-import crystalx.maxwell as maxwell
+from crystalx.maxwell import Maxwell
+from crystalx.heat import Heat
+
+#---------------------------------------------------------------------------------------------------#
+# Check if complex mode is activated
+if not np.issubdtype(PETSc.ScalarType, np.complexfloating):
+    raise RuntimeError(
+        "Complex mode required. Activate it with 'source /usr/local/bin/dolfinx-complex-mode'."
+    )
 
 #####################################################################################################
 #                                                                                                   #
@@ -117,6 +128,12 @@ Space_T = dolfinx.FunctionSpace(mesh, scalar_element)  # T
 # Ambient Temperature
 T_amb = 293.15#300.0  # K
 
+# Heat source
+f_heat = 0
+
+h = 5  # W / (m^2 K)
+
+
 #---------------------------------------------------------------------------------------------------#
 
 # permittivity
@@ -151,13 +168,15 @@ varsigma = dolfinx.Function(Q, name="varsigma")
 varepsilon = dolfinx.Function(Q, name="varepsilon")
 # density
 rho = dolfinx.Function(Q, name="rho")
+# heat capacity
+capacity = dolfinx.Function(Q, name="capacity")
 
 with open("examples/materials/materials.yml") as f:
     material_data = yaml.safe_load(f)
 
 #---------------------------------------------------------------------------------------------------#
 
-with kappa.vector.localForm() as loc_kappa, varsigma.vector.localForm() as loc_varsigma, varepsilon.vector.localForm() as loc_varepsilon, rho.vector.localForm() as loc_rho:
+with kappa.vector.localForm() as loc_kappa, varsigma.vector.localForm() as loc_varsigma, varepsilon.vector.localForm() as loc_varepsilon, rho.vector.localForm() as loc_rho, capacity.vector.localForm() as loc_capacity:
     for vol in Volume:
         cells = cell_tags.indices[cell_tags.values == vol.value]
         num_cells = len(cells)
@@ -171,11 +190,72 @@ with kappa.vector.localForm() as loc_kappa, varsigma.vector.localForm() as loc_v
             cells, np.full(num_cells, material_data[vol.name]["Emissivity"])
         )
         loc_rho.setValues(cells, np.full(num_cells, material_data[vol.name]["Density"]))
+        loc_capacity.setValues(
+            cells, np.full(num_cells, material_data[vol.name]["Heat Capacity"])
+        )
 
 #####################################################################################################
 #                                                                                                   #
 #                                 SOLVE MAXWELLS EQUATIONS                                          #
 #                                                                                                   #
 #####################################################################################################
-bcs_A = []
-maxwell.solve(Space_A, dV, dA, dI, mu_0, omega, varsigma, current_density, bcs_A)
+sourrounding_facets = facet_tags.indices[
+        facet_tags.values == Boundary.surrounding.value
+    ]
+dofs_A = dolfinx.fem.locate_dofs_topological(Space_A, 1, sourrounding_facets)
+
+value_A = dolfinx.Function(Space_A)
+with value_A.vector.localForm() as loc:  # according to https://jorgensd.github.io/dolfinx-tutorial/chapter2/ns_code2.html#boundary-conditions
+    loc.set(0)
+bcs_A = []# [dolfinx.DirichletBC(value_A, dofs_A)]
+
+em_problem = Maxwell(Space_A)
+em_problem.setup(dV, dA, dI, mu_0, omega, varsigma, current_density, bcs_A)
+A = em_problem.solve()
+
+#####################################################################################################
+#                                                                                                   #
+#                                   SOLVE HEAT EQUATION                                             #
+#                                                                                                   #
+#####################################################################################################
+
+sourrounding_facets = facet_tags.indices[
+        facet_tags.values == Boundary.surrounding.value
+    ]
+
+insulation_bottom_facets = facet_tags.indices[
+    facet_tags.values == Surface.insulation_bottom.value
+]
+
+coil_inside_facets = facet_tags.indices[
+    facet_tags.values == Surface.inductor_inside.value
+]
+
+dofs_T = dolfinx.fem.locate_dofs_topological(
+    Space_T, 1, np.concatenate([coil_inside_facets, sourrounding_facets, insulation_bottom_facets])
+)
+
+value_T = dolfinx.Function(Space_T)
+with value_T.vector.localForm() as loc:
+    loc.set(T_amb)
+bcs_T = [dolfinx.DirichletBC(value_T, dofs_T)]
+
+
+heat_problem = Heat(Space_T)
+heat_problem.setup(dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat, bcs_T)
+T = heat_problem.solve()
+
+#####################################################################################################
+#                                                                                                   #
+#                                          OUTPUT                                                   #
+#                                                                                                   #
+#####################################################################################################
+res_dir = "examples/results/"
+
+fields = [A, T]
+output_fields = [sol._cpp_object for sol in fields]
+
+vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "result.pvd", "w")
+
+vtk.write_function(output_fields)
+vtk.close()
