@@ -2,7 +2,7 @@
 
 ## Tasks
 General:
-- [ ] dimesnionenless formulation
+- [ ] dimensionless formulation
 Maxwell:
 
 Heat:
