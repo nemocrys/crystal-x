@@ -13,21 +13,29 @@ class Heat:
         # trial function 
         self._d_T = ufl.TrialFunction(V)
         # test function
-        self._del_T = ufl.TestFunction(V)
+        self._test_function = ufl.TestFunction(V)
         # solution variable
-        self._T = dolfinx.Function(V, name="T")
+        self._solution = dolfinx.Function(V, name="T")
 
         # radial coordinate
         self._r = ufl.SpatialCoordinate(V.mesh)[0]
 
-    def assemble_system(self, T, dV, dA, dI, rho, kappa, omega, varsigma, h, T_amb, A, f):
-        heat_scaling = 1.0
+    @property
+    def solution(self):
+        return self._solution
+
+    @property
+    def test_function(self):
+        return self._test_function
+    
+    def setup(self, T, dV, dA, dI, rho, kappa, omega, varsigma, h, T_amb, A, f):
+        heat_scaling = 2.76661542784358 # Value from Steady state
         
         Form_T = (
-            kappa * ufl.inner(ufl.grad(T), ufl.grad(self._del_T))
-            - rho * ufl.inner(f, self._del_T)
-            - heat_scaling * varsigma / 2 * omega ** 2 * ufl.inner(ufl.inner(A, A), self._del_T)
-        ) * 2*pi*self._r*  dV + h * ufl.inner((T("-") - T_amb), self._del_T("-")) * 2*pi*self._r* (
+            kappa * ufl.inner(ufl.grad(T), ufl.grad(self._test_function))
+            - rho * ufl.inner(f, self._test_function)
+            - heat_scaling * varsigma / 2 * omega ** 2 * ufl.inner(ufl.inner(A, A), self._test_function)
+        ) * 2*pi*self._r*  dV + h * ufl.inner((T("-") - T_amb), self._test_function("-")) * 2*pi*self._r* (
             dI(Surface.crystal.value)
             + dI(Surface.melt.value)
             + dI(Surface.crucible.value)
@@ -45,7 +53,7 @@ class Heat:
                 sigma_sb
                 # * varepsilon("-")
                 * eps
-                * ufl.inner((T("-") ** 4 - T_amb ** 4), self._del_T("-"))
+                * ufl.inner((T("-") ** 4 - T_amb ** 4), self._test_function("-"))
                 * 2*pi*self._r* dI(surf.value)
             )
 
@@ -55,18 +63,16 @@ class Heat:
         latent_heat_value = 5.96e4 * mat_data["crystal"]["Density"] * v_pull  # W/m^2
     
         Form_T += (
-            ufl.inner(-latent_heat_value, self._del_T("+")) 
+            ufl.inner(-latent_heat_value, self._test_function("+")) 
             * 2*pi*self._r* dI(Interface.melt_crystal.value)
         )
 
         return Form_T
 
-    def setup(self, dV, dA, dI, rho, kappa, omega, varsigma, h, T_amb, A, f, bcs):
-        Form_T = self.assemble_system(self._T, dV, dA, dI, rho, kappa, omega, varsigma, h, T_amb, A ,f)
-        # TODO what is Re(A), Im(A)
-        Gain_T = ufl.derivative(Form_T,  self._T,  self._d_T)
+    def assemble(self, Form, bcs):
+        Gain_T = ufl.derivative(Form,  self._solution,  self._d_T)
 
-        self._problem_T = dolfinx.fem.NonlinearProblem(Form_T,  self._T, bcs, J=Gain_T)
+        self._problem_T = dolfinx.fem.NonlinearProblem(Form,  self._solution, bcs, J=Gain_T)
 
     def solve(self):
 
@@ -77,6 +83,6 @@ class Heat:
         solver_T.convergence_criterion = "incremental"
         # parameters copied from https://jorgensd.github.io/dolfinx-tutorial/chapter2/hyperelasticity.html
 
-        solver_T.solve(self._T)
+        solver_T.solve(self._solution)
 
-        return self._T
+        return self._solution

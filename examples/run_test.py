@@ -22,6 +22,7 @@ by M. Schröder, A. Enders-Seidlitz, B. E. Abali, K. Dadzis
 # General Imports
 import numpy as np
 import yaml
+from time import time
 
 #---------------------------------------------------------------------------------------------------#
 
@@ -43,13 +44,20 @@ from geometry.gmsh_helpers import gmsh_model_to_mesh
 # crystal-x Imports
 from crystalx.maxwell import Maxwell
 from crystalx.heat import Heat
+from crystalx.time_stepper import OneStepTheta
 
 #---------------------------------------------------------------------------------------------------#
+
 # Check if complex mode is activated
 if not np.issubdtype(PETSc.ScalarType, np.complexfloating):
     raise RuntimeError(
         "Complex mode required. Activate it with 'source /usr/local/bin/dolfinx-complex-mode'."
     )
+
+#---------------------------------------------------------------------------------------------------#
+
+# Start timer
+start_time = time()
 
 #####################################################################################################
 #                                                                                                   #
@@ -133,7 +141,8 @@ f_heat = 0
 
 h = 5  # W / (m^2 K)
 
-
+t_end = 50.0
+Dt = 0.1
 #---------------------------------------------------------------------------------------------------#
 
 # permittivity
@@ -210,7 +219,8 @@ with value_A.vector.localForm() as loc:  # according to https://jorgensd.github.
 bcs_A = []# [dolfinx.DirichletBC(value_A, dofs_A)]
 
 em_problem = Maxwell(Space_A)
-em_problem.setup(dV, dA, dI, mu_0, omega, varsigma, current_density, bcs_A)
+em_form = em_problem.setup(em_problem.solution, dV, dA, dI, mu_0, omega, varsigma, current_density)
+em_problem.assemble(em_form, bcs_A)
 A = em_problem.solve()
 
 #####################################################################################################
@@ -242,20 +252,68 @@ bcs_T = [dolfinx.DirichletBC(value_T, dofs_T)]
 
 
 heat_problem = Heat(Space_T)
-heat_problem.setup(dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat, bcs_T)
-T = heat_problem.solve()
 
-#####################################################################################################
-#                                                                                                   #
-#                                          OUTPUT                                                   #
-#                                                                                                   #
-#####################################################################################################
+# Set initial temperature via stationary simulation
+heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
+heat_problem.assemble(heat_form, bcs_T)
+_ = heat_problem.solve()
+
+T_old = dolfinx.Function(Space_T)
+with heat_problem.solution.vector.localForm() as loc_T, T_old.vector.localForm() as loc_T_old:
+    # loc_T.set(T_amb)
+    #loc_T_old.set(T_amb)
+    loc_T.copy(loc_T_old)
+
+
+one_step_theta_timestepper = OneStepTheta(heat_problem, 0.5+Dt)
+
+# heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
+heat_form = one_step_theta_timestepper.step(T_old, rho * capacity, 0.0, Dt, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
+
+heat_problem.assemble(heat_form, bcs_T)
+# T = heat_problem.solve()
+
 res_dir = "examples/results/"
-
-fields = [A, T]
-output_fields = [sol._cpp_object for sol in fields]
-
 vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "result.pvd", "w")
 
-vtk.write_function(output_fields)
+for t in np.arange(0.0, t_end + Dt, Dt):
+    
+    fields = [heat_problem.solution]
+    output_fields = [sol._cpp_object for sol in fields]
+    vtk.write_function(output_fields, t)
+
+    heat_problem.solve()
+
+    with heat_problem.solution.vector.localForm() as loc_T, T_old.vector.localForm() as loc_T_old:
+        loc_T.copy(loc_T_old)
+
+    if MPI.COMM_WORLD.rank == 0:
+        elapsed = int(time() - start_time)
+        e_h, e_m, e_s = (
+            int(elapsed / 3600),
+            int(elapsed % 3600 / 60),
+            int((elapsed % 3600) % 60),
+        )
+        print(
+            f"time {t:.8f} s --- temperature solution in {e_h:.0f} h {e_m:.0f} min {e_s:.0f} s "
+        )
+
 vtk.close()
+
+
+
+# #####################################################################################################
+# #                                                                                                   #
+# #                                          OUTPUT                                                   #
+# #                                                                                                   #
+# #####################################################################################################
+
+# res_dir = "examples/results/"
+
+# fields = [A, T]
+# output_fields = [sol._cpp_object for sol in fields]
+
+# vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "result.pvd", "w")
+
+# vtk.write_function(output_fields)
+# vtk.close()

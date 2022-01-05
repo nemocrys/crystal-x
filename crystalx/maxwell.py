@@ -11,34 +11,42 @@ class Maxwell:
         # trial function 
         self._d_A = ufl.TrialFunction(V)
         # test function
-        self._del_A = ufl.TestFunction(V)
+        self._test_function = ufl.TestFunction(V)
         # solution variable
-        self._A = dolfinx.Function(V, name="A")
+        self._solution = dolfinx.Function(V, name="A")
 
         # radial coordinate
         self._r = ufl.SpatialCoordinate(V.mesh)[0]
 
-    def assemble_system(self, A, dV, dA, dI, mu, omega, varsigma, current_density):
+    @property
+    def solution(self):
+        return self._solution
+
+    @property
+    def test_function(self):
+        return self._test_function
+
+    def setup(self, A, dV, dA, dI, mu, omega, varsigma, current_density):
         Form_A = (
             1
             / mu
             * (
                 # ufl.inner(ufl.rot(A), ufl.rot(del_A))
-                ufl.inner(1 / self._r * ( self._r *  A).dx(0), 1/ self._r * (self._r *  self._del_A).dx(0))
-                + ufl.inner(-A.dx(1), -self._del_A.dx(1))
+                ufl.inner(1 / self._r * ( self._r *  A).dx(0), 1/ self._r * (self._r *  self._test_function).dx(0))
+                + ufl.inner(-A.dx(1), -self._test_function.dx(1))
                 # ufl.inner(A.dx(i), del_A.dx(i))
             )
-            + 1j * omega * varsigma * ufl.inner(A,  self._del_A)
-        ) * 2*pi* self._r *dV - ufl.inner(current_density,  self._del_A) * 2*pi* self._r * dV(Volume.inductor.value)
+            + 1j * omega * varsigma * ufl.inner(A,  self._test_function)
+        ) * 2*pi* self._r *dV - ufl.inner(current_density,  self._test_function) * 2*pi* self._r * dV(Volume.inductor.value)
 
         return Form_A
 
-    def setup(self, dV, dA, dI, mu, omega, varsigma, current_density, bcs):
-        Form_A = self.assemble_system(self._A, dV, dA, dI, mu, omega, varsigma, current_density)
+    def assemble(self, Form, bcs):
+        
         # TODO what is Re(A), Im(A)
-        Gain_A = ufl.derivative(Form_A,  self._A,  self._d_A)
+        Gain_A = ufl.derivative(Form,  self._solution,  self._d_A)
 
-        self._problem_EM = dolfinx.fem.NonlinearProblem(Form_A,  self._A, bcs, J=Gain_A)
+        self._problem_EM = dolfinx.fem.NonlinearProblem(Form,  self._solution, bcs, J=Gain_A)
 
     def solve(self):
 
@@ -49,6 +57,6 @@ class Maxwell:
         solver_EM.convergence_criterion = "incremental"
         # parameters copied from https://jorgensd.github.io/dolfinx-tutorial/chapter2/hyperelasticity.html
 
-        solver_EM.solve(self._A)
+        solver_EM.solve(self._solution)
 
-        return self._A
+        return self._solution
