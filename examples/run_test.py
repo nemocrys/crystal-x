@@ -28,6 +28,7 @@ from time import time
 
 # DOLFINx Imports
 import dolfinx
+from geometry.czochralski import crystal
 import ufl
 from petsc4py import PETSc
 from mpi4py import MPI
@@ -44,7 +45,9 @@ from geometry.gmsh_helpers import gmsh_model_to_mesh
 # crystal-x Imports
 from crystalx.maxwell import Maxwell
 from crystalx.heat import Heat
+from crystalx.laplace import Laplace
 from crystalx.time_stepper import OneStepTheta
+from crystalx.auxiliary_methods import project
 
 #---------------------------------------------------------------------------------------------------#
 
@@ -111,22 +114,33 @@ dI = ufl.Measure(
 #---------------------------------------------------------------------------------------------------#
 
 # Finite Element basis (for scalar elements)
-scalar_element = ufl.FiniteElement(
-    "CG", mesh.ufl_cell(), 1
+scalar_element = lambda degree: ufl.FiniteElement(
+    "CG", mesh.ufl_cell(), degree
 )
 
-vector_element = ufl.VectorElement(
-    "CG", mesh.ufl_cell(), 1
+
+vector_element = lambda degree: ufl.VectorElement(
+    "CG", mesh.ufl_cell(), degree
 )
 
+scalar_element_DG = lambda degree: ufl.FiniteElement(
+    "DG", mesh.ufl_cell(), degree
+)
+
+
+vector_element_DG = lambda degree: ufl.VectorElement(
+    "DG", mesh.ufl_cell(), degree
+)
 #---------------------------------------------------------------------------------------------------#
 
 # Function Space for Maxwell Equation
-Space_A = dolfinx.FunctionSpace(mesh, scalar_element)  # A
+Space_A = dolfinx.FunctionSpace(mesh, scalar_element(degree=1))  # A
 
 # Function Space for Heat Equation
-Space_T = dolfinx.FunctionSpace(mesh, scalar_element)  # T
+Space_T = dolfinx.FunctionSpace(mesh, scalar_element(degree=1))  # T
 
+# Function Space for Mesh Movement
+Space_V = dolfinx.FunctionSpace(mesh, vector_element(degree=1))  # V
 #####################################################################################################
 #                                                                                                   #
 #                                       PARAMETERS                                                  #
@@ -141,8 +155,8 @@ f_heat = 0
 
 h = 5  # W / (m^2 K)
 
-t_end = 50.0
-Dt = 0.1
+t_end = 1e-5
+Dt = 1e-6
 #---------------------------------------------------------------------------------------------------#
 
 # permittivity
@@ -225,7 +239,7 @@ A = em_problem.solve()
 
 #####################################################################################################
 #                                                                                                   #
-#                                   SOLVE HEAT EQUATION                                             #
+#                                   ASSEMBLE HEAT EQUATION                                          #
 #                                                                                                   #
 #####################################################################################################
 
@@ -241,6 +255,8 @@ coil_inside_facets = facet_tags.indices[
     facet_tags.values == Surface.inductor_inside.value
 ]
 
+#---------------------------------------------------------------------------------------------------#
+
 dofs_T = dolfinx.fem.locate_dofs_topological(
     Space_T, 1, np.concatenate([coil_inside_facets, sourrounding_facets, insulation_bottom_facets])
 )
@@ -250,6 +266,7 @@ with value_T.vector.localForm() as loc:
     loc.set(T_amb)
 bcs_T = [dolfinx.DirichletBC(value_T, dofs_T)]
 
+#---------------------------------------------------------------------------------------------------#
 
 heat_problem = Heat(Space_T)
 
@@ -273,16 +290,116 @@ heat_form = one_step_theta_timestepper.step(T_old, rho * capacity, 0.0, Dt, dV, 
 heat_problem.assemble(heat_form, bcs_T)
 # T = heat_problem.solve()
 
+#####################################################################################################
+#                                                                                                   #
+#                                   ASSEMBLE MESH MOVEMENT                                          #
+#                                                                                                   #
+#####################################################################################################
+
+sourrounding_facets = facet_tags.indices[
+        facet_tags.values == Boundary.surrounding.value
+    ]
+
+symmetry_axis_facets = facet_tags.indices[
+        facet_tags.values == Boundary.symmetry_axis.value
+    ]
+
+crystal_surface_facets = facet_tags.indices[
+        facet_tags.values == Surface.crystal.value
+    ]
+
+crucible_surface_facets = facet_tags.indices[
+        facet_tags.values == Surface.crucible.value
+    ]
+
+melt_crystal_interface_facets = facet_tags.indices[
+        facet_tags.values == Interface.melt_crystal.value
+    ]
+
+#---------------------------------------------------------------------------------------------------#
+
+dofs_hom_dirichlet = dolfinx.fem.locate_dofs_topological(
+    Space_V, 1, np.concatenate([sourrounding_facets, crucible_surface_facets, crystal_surface_facets]) # TODO: DoFs on crystal surface not quite right 
+)
+
+value_V = dolfinx.Function(Space_V)
+with value_V.vector.localForm() as loc:
+    loc.set(0)
+bcs_V = [dolfinx.DirichletBC(value_V, dofs_hom_dirichlet)]
+
+#---------------------------------------------------------------------------------------------------#
+
+dofs_symmetry_axis = dolfinx.fem.locate_dofs_topological(
+    (Space_V.sub(0), Space_V.sub(0).collapse(),),
+    1,
+    symmetry_axis_facets,
+)
+
+value_V = dolfinx.Function(Space_V.sub(0).collapse()) # only BC on x-component
+with value_V.vector.localForm() as loc:
+    loc.set(0)
+
+bcs_V.append(dolfinx.DirichletBC(
+        value_V, dofs_symmetry_axis, Space_V.sub(0)
+    )
+)
+
+#---------------------------------------------------------------------------------------------------#
+
+dofs_melt_crystal_interface = dolfinx.fem.locate_dofs_topological(
+    Space_V, 1, melt_crystal_interface_facets 
+)
+
+with open("examples/materials/materials.yml") as f:
+    mat_data = yaml.safe_load(f)
+    
+v_pull = 4  # mm/min
+v_pull *= 1.6666666e-5  # m/s
+latent_heat_value = 5.96e4 * mat_data["crystal"]["Density"] * v_pull  # W/m^2
+
+# normal velocity from Stefan condition
+
+# Function Space for Mesh Movement
+Space_velocity = dolfinx.FunctionSpace(mesh, vector_element_DG(degree=0))  # V
+
+heat_flux = project(kappa * ufl.grad(heat_problem.solution), Space_velocity, name="Heat Flux")
+heat_flux_plus = project(heat_flux("+"), Space_velocity, name="Heat Flux Plus")
+heat_flux_minus = project(heat_flux("-"), Space_velocity, name="Heat Flux Minus")
+
+jump_heat_flux = project((heat_flux("+") - heat_flux("-")), Space_velocity)
+stefan_condition = project( Dt * jump_heat_flux / latent_heat_value, Space_velocity , name="Stefan Condition")
+
+value_V = dolfinx.Function(Space_velocity)
+value_V.interpolate(stefan_condition)
+
+bcs_V.append(dolfinx.DirichletBC(
+        value_V, dofs_melt_crystal_interface
+    )
+)
+
+#---------------------------------------------------------------------------------------------------#
+
+mesh_movement_problem = Laplace(Space_V)
+mesh_movement_form = mesh_movement_problem.setup(mesh_movement_problem.solution, dV, dA, dI)
+mesh_movement_problem.assemble(mesh_movement_form, bcs_V)
+
+#####################################################################################################
+#                                                                                                   #
+#                                         TIME LOOP                                                 #
+#                                                                                                   #
+#####################################################################################################
+
 res_dir = "examples/results/"
 vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "result.pvd", "w")
 
-for t in np.arange(0.0, t_end + Dt, Dt):
+for step, t in enumerate(np.arange(0.0, t_end + Dt, Dt)):
     
-    fields = [heat_problem.solution]
+    fields = [heat_problem.solution, heat_flux, heat_flux_plus, heat_flux_minus, stefan_condition]
     output_fields = [sol._cpp_object for sol in fields]
     vtk.write_function(output_fields, t)
 
     heat_problem.solve()
+    # mesh_movement_problem.solve()
 
     with heat_problem.solution.vector.localForm() as loc_T, T_old.vector.localForm() as loc_T_old:
         loc_T.copy(loc_T_old)
@@ -295,7 +412,7 @@ for t in np.arange(0.0, t_end + Dt, Dt):
             int((elapsed % 3600) % 60),
         )
         print(
-            f"time {t:.8f} s --- temperature solution in {e_h:.0f} h {e_m:.0f} min {e_s:.0f} s "
+            f"step {step}: time {t:.8f} s --- temperature solution in {e_h:.0f} h {e_m:.0f} min {e_s:.0f} s "
         )
 
 vtk.close()
