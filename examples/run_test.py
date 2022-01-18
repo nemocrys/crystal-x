@@ -48,7 +48,7 @@ from crystalx.heat import Heat
 from crystalx.laplace import Laplace
 from crystalx.interface import Stefan
 from crystalx.time_stepper import OneStepTheta
-from crystalx.auxiliary_methods import project
+from crystalx.auxiliary_methods import project, interface_normal
 
 #---------------------------------------------------------------------------------------------------#
 
@@ -140,8 +140,11 @@ Space_A = dolfinx.FunctionSpace(mesh, scalar_element(degree=1))  # A
 # Function Space for Heat Equation
 Space_T = dolfinx.FunctionSpace(mesh, scalar_element(degree=2))  # T
 
-# Function Space for Mesh Movement
+# Function Space for Interface Displacement in normal direction
 Space_V = dolfinx.FunctionSpace(mesh, scalar_element(degree=1))  # V
+
+# Function Space for Mesh Movement
+Space_MM = dolfinx.FunctionSpace(mesh, vector_element(degree=1)) # MM
 #####################################################################################################
 #                                                                                                   #
 #                                       PARAMETERS                                                  #
@@ -156,8 +159,9 @@ f_heat = 0
 
 h = 5  # W / (m^2 K)
 
-t_end = 1e-5
-Dt = 1e-6
+
+Dt = 1e-4
+t_end = 10 * Dt
 #---------------------------------------------------------------------------------------------------#
 
 # permittivity
@@ -279,7 +283,7 @@ _ = heat_problem.solve()
 T_old = dolfinx.Function(Space_T)
 with heat_problem.solution.vector.localForm() as loc_T, T_old.vector.localForm() as loc_T_old:
     # loc_T.set(T_amb)
-    #loc_T_old.set(T_amb)
+    # loc_T_old.set(T_amb)
     loc_T.copy(loc_T_old)
 
 
@@ -289,106 +293,13 @@ one_step_theta_timestepper = OneStepTheta(heat_problem, 0.5+Dt)
 heat_form = one_step_theta_timestepper.step(T_old, rho * capacity, 0.0, Dt, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
 
 heat_problem.assemble(heat_form, bcs_T)
-# T = heat_problem.solve()
-
-#####################################################################################################
-#                                                                                                   #
-#                                   ASSEMBLE MESH MOVEMENT                                          #
-#                                                                                                   #
-#####################################################################################################
-
-# sourrounding_facets = facet_tags.indices[
-#         facet_tags.values == Boundary.surrounding.value
-#     ]
-
-# symmetry_axis_facets = facet_tags.indices[
-#         facet_tags.values == Boundary.symmetry_axis.value
-#     ]
-
-# crystal_surface_facets = facet_tags.indices[
-#         facet_tags.values == Surface.crystal.value
-#     ]
-
-# crucible_surface_facets = facet_tags.indices[
-#         facet_tags.values == Surface.crucible.value
-#     ]
-
-# melt_crystal_interface_facets = facet_tags.indices[
-#         facet_tags.values == Interface.melt_crystal.value
-#     ]
-
-# #---------------------------------------------------------------------------------------------------#
-
-# dofs_hom_dirichlet = dolfinx.fem.locate_dofs_topological(
-#     Space_V, 1, np.concatenate([sourrounding_facets, crucible_surface_facets, crystal_surface_facets]) # TODO: DoFs on crystal surface not quite right 
-# )
-
-# value_V = dolfinx.Function(Space_V)
-# with value_V.vector.localForm() as loc:
-#     loc.set(0)
-# bcs_V = [dolfinx.DirichletBC(value_V, dofs_hom_dirichlet)]
-
-# #---------------------------------------------------------------------------------------------------#
-
-# dofs_symmetry_axis = dolfinx.fem.locate_dofs_topological(
-#     (Space_V.sub(0), Space_V.sub(0).collapse(),),
-#     1,
-#     symmetry_axis_facets,
-# )
-
-# value_V = dolfinx.Function(Space_V.sub(0).collapse()) # only BC on x-component
-# with value_V.vector.localForm() as loc:
-#     loc.set(0)
-
-# bcs_V.append(dolfinx.DirichletBC(
-#         value_V, dofs_symmetry_axis, Space_V.sub(0)
-#     )
-# )
-
-# #---------------------------------------------------------------------------------------------------#
-
-# dofs_melt_crystal_interface = dolfinx.fem.locate_dofs_topological(
-#     Space_V, 1, melt_crystal_interface_facets 
-# )
-
-# with open("examples/materials/materials.yml") as f:
-#     mat_data = yaml.safe_load(f)
-    
-# v_pull = 4  # mm/min
-# v_pull *= 1.6666666e-5  # m/s
-# latent_heat_value = 5.96e4 * mat_data["crystal"]["Density"] * v_pull  # W/m^2
-
-# # normal velocity from Stefan condition
-
-# # Function Space for Mesh Movement
-# Space_velocity = dolfinx.FunctionSpace(mesh, vector_element_DG(degree=0))  # V
-
-# heat_flux = project(kappa * ufl.grad(heat_problem.solution), Space_velocity, name="Heat Flux")
-# heat_flux_plus = project(heat_flux("+"), Space_velocity, name="Heat Flux Plus")
-# heat_flux_minus = project(heat_flux("-"), Space_velocity, name="Heat Flux Minus")
-
-# jump_heat_flux = project((heat_flux("+") - heat_flux("-")), Space_velocity)
-# stefan_condition = project( Dt * jump_heat_flux / latent_heat_value, Space_velocity , name="Stefan Condition")
-
-# value_V = dolfinx.Function(Space_velocity)
-# value_V.interpolate(stefan_condition)
-
-# bcs_V.append(dolfinx.DirichletBC(
-#         value_V, dofs_melt_crystal_interface
-#     )
-# )
-
-# #---------------------------------------------------------------------------------------------------#
-
-# mesh_movement_problem = Laplace(Space_V)
-# mesh_movement_form = mesh_movement_problem.setup(mesh_movement_problem.solution, dV, dA, dI)
-# mesh_movement_problem.assemble(mesh_movement_form, bcs_V)
 
 #####################################################################################################
 #                                                                                                   #
 #                                   ASSEMBLE STEFAN PROBLEM                                         #
 #                                                                                                   #
 #####################################################################################################
+
 melt_crystal_interface_facets = facet_tags.indices[
         facet_tags.values == Interface.melt_crystal.value
     ]
@@ -406,11 +317,95 @@ v_pull = 4  # mm/min
 v_pull *= 1.6666666e-5  # m/s
 latent_heat_value = 5.96e4 * mat_data["crystal"]["Density"] * v_pull  # W/m^2
 
+# #---------------------------------------------------------------------------------------------------#
 
 stefan_problem = Stefan(Space_V)
 stefan_a, stefan_L = stefan_problem.setup(stefan_problem.solution, dV, dA, dI, kappa, latent_heat_value, Dt, heat_problem.solution)
 stefan_problem.assemble(stefan_a, stefan_L, bcs_V, dofs_melt_crystal_interface)
-stefan_problem.solve(dofs_melt_crystal_interface)
+_ , normal_displacement_values = stefan_problem.solve(dofs_melt_crystal_interface)
+
+# #---------------------------------------------------------------------------------------------------#
+
+n = interface_normal(Space_V, Interface.melt_crystal, facet_tags)
+normal_displacement_vector = np.repeat(normal_displacement_values.reshape(-1,1), n.shape[1], axis=1) * n 
+
+#####################################################################################################
+#                                                                                                   #
+#                                   ASSEMBLE MESH MOVEMENT                                          #
+#                                                                                                   #
+#####################################################################################################
+
+sourrounding_facets = facet_tags.indices[
+        facet_tags.values == Boundary.surrounding.value
+    ]
+
+symmetry_axis_facets = facet_tags.indices[
+        facet_tags.values == Boundary.symmetry_axis.value
+    ]
+
+crystal_surface_facets = facet_tags.indices[
+        facet_tags.values == Surface.crystal.value
+    ]
+
+crucible_surface_facets = facet_tags.indices[
+        facet_tags.values == Surface.crucible.value
+    ]
+
+melt_crystal_interface_facets = facet_tags.indices[
+        facet_tags.values == Interface.melt_crystal.value
+    ]
+
+#---------------------------------------------------------------------------------------------------#
+
+dofs_hom_dirichlet = dolfinx.fem.locate_dofs_topological(
+    Space_MM, 1, np.concatenate([sourrounding_facets, crucible_surface_facets, crystal_surface_facets]) # TODO: DoFs on crystal surface not quite right 
+)
+
+value_MM = dolfinx.Function(Space_MM)
+with value_MM.vector.localForm() as loc:
+    loc.set(0)
+bcs_MM = [dolfinx.DirichletBC(value_MM, dofs_hom_dirichlet)]
+
+#---------------------------------------------------------------------------------------------------#
+
+dofs_symmetry_axis = dolfinx.fem.locate_dofs_topological(
+    (Space_MM.sub(0), Space_MM.sub(0).collapse(),),
+    1,
+    symmetry_axis_facets,
+)
+
+value_MM = dolfinx.Function(Space_MM.sub(0).collapse()) # only BC on x-component
+with value_MM.vector.localForm() as loc:
+    loc.set(0)
+
+bcs_MM.append(dolfinx.DirichletBC(
+        value_MM, dofs_symmetry_axis, Space_MM.sub(0)
+    )
+)
+
+#---------------------------------------------------------------------------------------------------#
+
+dofs_melt_crystal_interface = dolfinx.fem.locate_dofs_topological(
+    Space_MM, 1, melt_crystal_interface_facets 
+)
+
+
+class InterfaceDisplacement:
+    def __init__(self) -> None:
+        pass
+    def __call__(self, x):
+        print(x.shape)
+        values = np.zeros((gdim, x.shape[1]),dtype=PETSc.ScalarType)
+        return values
+
+interface_displacement_values = dolfinx.Function(Space_MM)
+
+with interface_displacement_values.vector.localForm() as loc:
+    values = loc.getArray()
+    values[2 * dofs_melt_crystal_interface] = normal_displacement_vector[:,0]
+    values[2 * dofs_melt_crystal_interface + 1] = normal_displacement_vector[:,1]
+    loc.setArray(values)
+
 
 #####################################################################################################
 #                                                                                                   #
@@ -423,7 +418,7 @@ vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "result.pvd", "w")
 
 for step, t in enumerate(np.arange(0.0, t_end + Dt, Dt)):
     
-    fields = [heat_problem.solution, stefan_problem.solution]
+    fields = [heat_problem.solution, stefan_problem.solution, interface_displacement_values]
     output_fields = [sol._cpp_object for sol in fields]
     vtk.write_function(output_fields, t)
 

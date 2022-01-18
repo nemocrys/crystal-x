@@ -50,9 +50,10 @@ class Stefan:
     
     def solve(self, interface_dofs):
         
+        sol = solve(self._A, self._b)
         with self.solution.vector.localForm() as loc:
             values = loc.getArray()
-            values[interface_dofs] = solve(self._A, self._b)
+            values[interface_dofs] = sol
             loc.setArray(values)
 
-        return self._solution
+        return self._solution, sol

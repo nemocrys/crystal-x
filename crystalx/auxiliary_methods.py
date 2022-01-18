@@ -1,6 +1,8 @@
 from math import modf
-from numpy import unique
+
+import numpy as np
 import dolfinx
+from geometry.geometry import Interface
 import ufl
 from mpi4py import MPI
 
@@ -36,3 +38,40 @@ def project(function, functionspace, **kwargs):
     sol.interpolate(problem.solve())
 
     return sol
+
+
+def interface_normal(function_space, interface, facet_tags):
+    interface_facets = facet_tags.indices[
+        facet_tags.values == interface.value
+    ]
+
+    dofs_interface = dolfinx.fem.locate_dofs_topological(
+        function_space, 1, interface_facets
+    )
+
+    #---------------------------------------------------------------------------------------------------#
+    
+    coordinates_interface = function_space.tabulate_dof_coordinates()[dofs_interface]
+
+    permutation = np.argsort(coordinates_interface[:, 0])
+    
+    inverse_permutation = np.empty(permutation.size, dtype=np.int32)
+    for i in np.arange(permutation.size):
+        inverse_permutation[permutation[i]] = i
+
+    coordinates_interface = coordinates_interface[permutation]
+
+    # calculate connection vectors
+    connection_vectors = coordinates_interface[1:,:] - coordinates_interface[:-1,:]
+    
+    # calculate tanget vector
+    orthogonal_vectors = np.zeros(connection_vectors.shape)
+    orthogonal_vectors[:,0] = connection_vectors[:,1]
+    orthogonal_vectors[:,1] -= connection_vectors[:,0]
+    # normalize
+    orthogonal_vectors /= np.repeat(np.linalg.norm(orthogonal_vectors, axis = 1).reshape(-1,1), 3, axis=1)
+
+    n = np.vstack((np.array([0.0, -1.0, 0.0]), orthogonal_vectors))
+    n = n[inverse_permutation]
+    
+    return n
