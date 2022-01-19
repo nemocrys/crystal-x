@@ -40,7 +40,7 @@ def project(function, functionspace, **kwargs):
     return sol
 
 
-def interface_normal(function_space, interface, facet_tags):
+def interface_normal(function_space, interface, meniscus, facet_tags):
     interface_facets = facet_tags.indices[
         facet_tags.values == interface.value
     ]
@@ -50,16 +50,27 @@ def interface_normal(function_space, interface, facet_tags):
     )
 
     #---------------------------------------------------------------------------------------------------#
+
+    meniscus_facets = facet_tags.indices[
+        facet_tags.values == meniscus.value
+    ]
+
+    dofs_meniscus = dolfinx.fem.locate_dofs_topological(
+        function_space, 1, meniscus_facets
+    )
+
+    #---------------------------------------------------------------------------------------------------#
     
     coordinates_interface = function_space.tabulate_dof_coordinates()[dofs_interface]
 
-    permutation = np.argsort(coordinates_interface[:, 0])
+    # permutation in ascending order (x-Coordinate)
+    permutation_interface = np.argsort(coordinates_interface[:, 0])
     
-    inverse_permutation = np.empty(permutation.size, dtype=np.int32)
-    for i in np.arange(permutation.size):
-        inverse_permutation[permutation[i]] = i
+    inverse_permutation = np.empty(permutation_interface.size, dtype=np.int32)
+    for i in np.arange(permutation_interface.size):
+        inverse_permutation[permutation_interface[i]] = i
 
-    coordinates_interface = coordinates_interface[permutation]
+    coordinates_interface = coordinates_interface[permutation_interface]
 
     # calculate connection vectors
     connection_vectors = coordinates_interface[1:,:] - coordinates_interface[:-1,:]
@@ -71,7 +82,90 @@ def interface_normal(function_space, interface, facet_tags):
     # normalize
     orthogonal_vectors /= np.repeat(np.linalg.norm(orthogonal_vectors, axis = 1).reshape(-1,1), 3, axis=1)
 
-    n = np.vstack((np.array([0.0, -1.0, 0.0]), orthogonal_vectors))
-    n = n[inverse_permutation]
+    # take the mean of the two adjacent facets for the normal on a vertex
+    normals = np.zeros(shape=coordinates_interface.shape)
     
-    return n
+    for i in range(len(orthogonal_vectors) - 1):
+        normals[i+1,:2] = 0.5 * (orthogonal_vectors[i,:2] + orthogonal_vectors[i+1, :2])
+    
+    # the normal on the symm. axis is -e_2
+    normals[0,1] = -1.0
+
+    #---------------------------------------------------------------------------------------------------#
+
+    # the normal on the triple point is the tangent to the meniscus
+    coordinates_meniscus = function_space.tabulate_dof_coordinates()[dofs_meniscus]
+
+    # permutation in decresing order (y-Coordinate)
+    permutation_meniscus = np.flipud(np.argsort(coordinates_meniscus[:, 1]))
+
+    coordinates_meniscus = coordinates_meniscus[permutation_meniscus]
+
+    # calculate tangent direction from first two points
+    normal_triple_point = coordinates_meniscus[1,:] - coordinates_meniscus[0,:]
+    normal_triple_point /= np.repeat(np.linalg.norm(normal_triple_point), 3)
+
+    normals[-1,:] = normal_triple_point
+    #---------------------------------------------------------------------------------------------------#
+    normals = normals[inverse_permutation]
+    
+    return normals
+
+
+def meniscus_shape(z):
+    h = z[0]
+    
+    gamma = 0.56
+    rho = 6980.0
+    g = 9.81
+
+    l_c = (gamma / (rho * g) )**0.5
+
+    x = l_c * (
+        np.arccosh(2 * l_c/z) - np.arccosh(2*l_c/h)
+    ) - l_c * (
+        (4 - z**2/l_c**2)**0.5 - (4 - h**2/l_c**2)**0.5
+    )
+
+    return x
+
+def meniscus_displacement(displacement_function, function_space, meniscus, facet_tags):
+    
+    meniscus_facets = facet_tags.indices[
+        facet_tags.values == meniscus.value
+    ]
+
+    dofs_meniscus = dolfinx.fem.locate_dofs_topological(
+        function_space, 1, meniscus_facets
+    )
+
+    #---------------------------------------------------------------------------------------------------#
+    
+    coordinates_meniscus = function_space.tabulate_dof_coordinates()[dofs_meniscus]
+
+    # permutation in decresing order (y-Coordinate)
+    permutation_meniscus = np.flipud(np.argsort(coordinates_meniscus[:, 1]))
+
+    coordinates_meniscus = coordinates_meniscus[permutation_meniscus]
+
+    dof_triple_point = dofs_meniscus[permutation_meniscus][0]
+    dof_crucible = dofs_meniscus[permutation_meniscus][-1]
+
+    displacement_of_triple_point = displacement_function.vector.getArray()[2*dof_triple_point:2*dof_triple_point+2].real
+    
+    new_height = coordinates_meniscus[0,1] + displacement_of_triple_point[1] - coordinates_meniscus[-1,1]
+
+    meniscus_y_coordinates = np.linspace(0.0, new_height, coordinates_meniscus.shape[0])[::-1]
+    meniscus_y_coordinates[-1] += 1e-10 # avoid division by 0
+    meniscus_x_coordinates = meniscus_shape(meniscus_y_coordinates)
+    
+    meniscus_x_coordinates += coordinates_meniscus[0,0]
+    meniscus_y_coordinates += coordinates_meniscus[-1,1]
+
+    #---------------------------------------------------------------------------------------------------#
+
+    displacement_meniscus = - coordinates_meniscus
+    displacement_meniscus[:, 0] += meniscus_x_coordinates
+    displacement_meniscus[:, 1] += meniscus_y_coordinates
+
+    

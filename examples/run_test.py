@@ -48,7 +48,7 @@ from crystalx.heat import Heat
 from crystalx.laplace import Laplace
 from crystalx.interface import Stefan
 from crystalx.time_stepper import OneStepTheta
-from crystalx.auxiliary_methods import project, interface_normal
+from crystalx.auxiliary_methods import project, interface_normal, meniscus_displacement
 
 #---------------------------------------------------------------------------------------------------#
 
@@ -159,9 +159,14 @@ f_heat = 0
 
 h = 5  # W / (m^2 K)
 
+#---------------------------------------------------------------------------------------------------#
 
 Dt = 1e-4
 t_end = 10 * Dt
+
+v_pull = 4  # mm/min
+v_pull *= 1.6666666e-5  # m/s
+
 #---------------------------------------------------------------------------------------------------#
 
 # permittivity
@@ -313,9 +318,7 @@ bcs_V = []
 with open("examples/materials/materials.yml") as f:
     mat_data = yaml.safe_load(f)
 
-v_pull = 4  # mm/min
-v_pull *= 1.6666666e-5  # m/s
-latent_heat_value = 5.96e4 * mat_data["crystal"]["Density"] * v_pull  # W/m^2
+latent_heat_value = 5.96e4 * mat_data["melt"]["Density"] # J/m^3
 
 # #---------------------------------------------------------------------------------------------------#
 
@@ -326,7 +329,7 @@ _ , normal_displacement_values = stefan_problem.solve(dofs_melt_crystal_interfac
 
 # #---------------------------------------------------------------------------------------------------#
 
-n = interface_normal(Space_V, Interface.melt_crystal, facet_tags)
+n = interface_normal(Space_V, Interface.melt_crystal, Surface.melt, facet_tags)
 normal_displacement_vector = np.repeat(normal_displacement_values.reshape(-1,1), n.shape[1], axis=1) * n 
 
 #####################################################################################################
@@ -384,28 +387,30 @@ bcs_MM.append(dolfinx.DirichletBC(
 )
 
 #---------------------------------------------------------------------------------------------------#
+# Calculate Displacement Vector on Interface as u = Dt * (v_pull + v_growth)
+
+v_pull_displacement_vector = Dt * v_pull * np.repeat(np.array([0.0 , 1.0, 0.0]).reshape(3,1), normal_displacement_vector.shape[0] , axis=1).T
+
+displacement_vector = normal_displacement_vector + v_pull_displacement_vector
+
+#---------------------------------------------------------------------------------------------------#
 
 dofs_melt_crystal_interface = dolfinx.fem.locate_dofs_topological(
     Space_MM, 1, melt_crystal_interface_facets 
 )
 
+displacement_function = dolfinx.Function(Space_MM)
 
-class InterfaceDisplacement:
-    def __init__(self) -> None:
-        pass
-    def __call__(self, x):
-        print(x.shape)
-        values = np.zeros((gdim, x.shape[1]),dtype=PETSc.ScalarType)
-        return values
-
-interface_displacement_values = dolfinx.Function(Space_MM)
-
-with interface_displacement_values.vector.localForm() as loc:
+with displacement_function.vector.localForm() as loc:
     values = loc.getArray()
-    values[2 * dofs_melt_crystal_interface] = normal_displacement_vector[:,0]
-    values[2 * dofs_melt_crystal_interface + 1] = normal_displacement_vector[:,1]
+    values[2 * dofs_melt_crystal_interface] = displacement_vector[:,0]
+    values[2 * dofs_melt_crystal_interface + 1] = displacement_vector[:,1]
     loc.setArray(values)
 
+#---------------------------------------------------------------------------------------------------#
+# Calculate the displacement caused by the change of the meniscus shape
+meniscus_displacement(displacement_function, Space_MM, Surface.melt, facet_tags)
+exit()
 
 #####################################################################################################
 #                                                                                                   #

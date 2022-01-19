@@ -60,7 +60,7 @@ class Heat:
         # TODO additional heat source for phase boundary
         v_pull = 4  # mm/min
         v_pull *= 1.6666666e-5  # m/s
-        latent_heat_value = 5.96e4 * mat_data["crystal"]["Density"] * v_pull  # W/m^2
+        latent_heat_value = 5.96e4 * mat_data["melt"]["Density"] * v_pull  # W/m^2 #TODO: WRONG !!! v_growth is needed and is not uniform!!!!
     
         Form_T += (
             ufl.inner(-latent_heat_value, self._test_function("+")) 
