@@ -145,6 +145,9 @@ def meniscus_displacement(displacement_function, function_space, meniscus, facet
 
     # permutation in decresing order (y-Coordinate)
     permutation_meniscus = np.flipud(np.argsort(coordinates_meniscus[:, 1]))
+    inverse_permutation = np.empty(permutation_meniscus.size, dtype=np.int32)
+    for i in np.arange(permutation_meniscus.size):
+        inverse_permutation[permutation_meniscus[i]] = i
 
     coordinates_meniscus = coordinates_meniscus[permutation_meniscus]
 
@@ -168,4 +171,19 @@ def meniscus_displacement(displacement_function, function_space, meniscus, facet
     displacement_meniscus[:, 0] += meniscus_x_coordinates
     displacement_meniscus[:, 1] += meniscus_y_coordinates
 
+    # mark triple point and crucible point
+    displacement_meniscus[0, 2] = np.inf
+    displacement_meniscus [-1,2] = np.inf
+
+    displacement_meniscus = displacement_meniscus[inverse_permutation]
+
+    # remove the displacement on triple point and meniscus
+    cleaned_dofs_meniscus = dofs_meniscus[np.logical_and(dofs_meniscus != dof_triple_point, dofs_meniscus != dof_crucible)]
+    displacement_meniscus = displacement_meniscus[displacement_meniscus[:,2] != np.inf]
     
+    # write meniscus displacement in displacement function
+    with displacement_function.vector.localForm() as loc:
+        values = loc.getArray()
+        values[2 * cleaned_dofs_meniscus] = displacement_meniscus[:,0]
+        values[2 * cleaned_dofs_meniscus + 1] = displacement_meniscus[:,1]
+        loc.setArray(values)

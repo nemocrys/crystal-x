@@ -399,7 +399,7 @@ dofs_melt_crystal_interface = dolfinx.fem.locate_dofs_topological(
     Space_MM, 1, melt_crystal_interface_facets 
 )
 
-displacement_function = dolfinx.Function(Space_MM)
+displacement_function = dolfinx.Function(Space_MM, name="displacement_function")
 
 with displacement_function.vector.localForm() as loc:
     values = loc.getArray()
@@ -410,7 +410,6 @@ with displacement_function.vector.localForm() as loc:
 #---------------------------------------------------------------------------------------------------#
 # Calculate the displacement caused by the change of the meniscus shape
 meniscus_displacement(displacement_function, Space_MM, Surface.melt, facet_tags)
-exit()
 
 #####################################################################################################
 #                                                                                                   #
@@ -423,7 +422,7 @@ vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "result.pvd", "w")
 
 for step, t in enumerate(np.arange(0.0, t_end + Dt, Dt)):
     
-    fields = [heat_problem.solution, stefan_problem.solution, interface_displacement_values]
+    fields = [heat_problem.solution, stefan_problem.solution, displacement_function]
     output_fields = [sol._cpp_object for sol in fields]
     vtk.write_function(output_fields, t)
 
