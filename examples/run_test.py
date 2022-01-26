@@ -48,7 +48,7 @@ from crystalx.heat import Heat
 from crystalx.laplace import Laplace
 from crystalx.interface import Stefan
 from crystalx.time_stepper import OneStepTheta
-from crystalx.auxiliary_methods import project, interface_normal, meniscus_displacement
+from crystalx.auxiliary_methods import project, interface_normal, normal_velocity, interface_displacement, meniscus_displacement
 
 #---------------------------------------------------------------------------------------------------#
 
@@ -323,14 +323,14 @@ latent_heat_value = 5.96e4 * mat_data["melt"]["Density"] # J/m^3
 # #---------------------------------------------------------------------------------------------------#
 
 stefan_problem = Stefan(Space_V)
-stefan_a, stefan_L = stefan_problem.setup(stefan_problem.solution, dV, dA, dI, kappa, latent_heat_value, Dt, heat_problem.solution)
+stefan_a, stefan_L = stefan_problem.setup(stefan_problem.solution, dV, dA, dI, kappa, latent_heat_value, heat_problem.solution)
 stefan_problem.assemble(stefan_a, stefan_L, bcs_V, dofs_melt_crystal_interface)
-_ , normal_displacement_values = stefan_problem.solve(dofs_melt_crystal_interface)
+_ , normal_velocity_values = stefan_problem.solve(dofs_melt_crystal_interface)
 
 # #---------------------------------------------------------------------------------------------------#
 
-n = interface_normal(Space_V, Interface.melt_crystal, Surface.melt, facet_tags)
-normal_displacement_vector = np.repeat(normal_displacement_values.reshape(-1,1), n.shape[1], axis=1) * n 
+n = interface_normal(Space_V, Interface.melt_crystal, facet_tags)
+normal_velocity_vector = np.repeat(normal_velocity_values.reshape(-1,1), n.shape[1], axis=1) * n 
 
 #####################################################################################################
 #                                                                                                   #
@@ -387,12 +387,18 @@ bcs_MM.append(dolfinx.DirichletBC(
 )
 
 #---------------------------------------------------------------------------------------------------#
-# Calculate Displacement Vector on Interface as u = Dt * (v_pull + v_growth)
+# Calculate Displacement Vector on Interface as u = Dt * ((n * (v_pull + v_growth)) n)
 
-v_pull_displacement_vector = Dt * v_pull * np.repeat(np.array([0.0 , 1.0, 0.0]).reshape(3,1), normal_displacement_vector.shape[0] , axis=1).T
+v_pull_vector = v_pull * np.repeat(np.array([0.0 , 1.0, 0.0]).reshape(3,1), normal_velocity_vector.shape[0] , axis=1).T
 
-displacement_vector = normal_displacement_vector + v_pull_displacement_vector
+velocity_vector = normal_velocity_vector + v_pull_vector
 
+normal_velocity_vector = normal_velocity(velocity_vector, n)
+
+beta = 10.0 # in degrees
+beta *= np.pi / 180
+
+displacement_vector = interface_displacement(normal_velocity_vector, v_pull_vector, Dt, beta, Space_V, Interface.melt_crystal, Surface.melt, facet_tags)
 #---------------------------------------------------------------------------------------------------#
 
 dofs_melt_crystal_interface = dolfinx.fem.locate_dofs_topological(
@@ -408,8 +414,8 @@ with displacement_function.vector.localForm() as loc:
     loc.setArray(values)
 
 #---------------------------------------------------------------------------------------------------#
-# Calculate the displacement caused by the change of the meniscus shape
-meniscus_displacement(displacement_function, Space_MM, Surface.melt, facet_tags)
+# Calculate the displacement caused by the change of the meniscus shape 
+# meniscus_displacement(displacement_function, Space_MM, Surface.melt, facet_tags) # TODO: Remove error on calculate meniscus
 
 #####################################################################################################
 #                                                                                                   #
@@ -425,6 +431,7 @@ for step, t in enumerate(np.arange(0.0, t_end + Dt, Dt)):
     fields = [heat_problem.solution, stefan_problem.solution, displacement_function]
     output_fields = [sol._cpp_object for sol in fields]
     vtk.write_function(output_fields, t)
+
 
     heat_problem.solve()
     # mesh_movement_problem.solve()
