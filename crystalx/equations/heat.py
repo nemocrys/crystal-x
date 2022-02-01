@@ -20,6 +20,8 @@ class Heat:
         # radial coordinate
         self._r = ufl.SpatialCoordinate(V.mesh)[0]
 
+        self._heat_scaling = 2.76661542784358 # Value from Steady state
+
     @property
     def solution(self):
         return self._solution
@@ -29,12 +31,11 @@ class Heat:
         return self._test_function
     
     def setup(self, T, dV, dA, dI, rho, kappa, omega, varsigma, h, T_amb, A, f):
-        heat_scaling = 2.76661542784358 # Value from Steady state
         
         Form_T = (
             kappa * ufl.inner(ufl.grad(T), ufl.grad(self._test_function))
             - rho * ufl.inner(f, self._test_function)
-            - heat_scaling * varsigma / 2 * omega ** 2 * ufl.inner(ufl.inner(A, A), self._test_function)
+            - self._heat_scaling * varsigma / 2 * omega ** 2 * ufl.inner(ufl.inner(A, A), self._test_function)
         ) * 2*pi*self._r*  dV + h * ufl.inner((T("-") - T_amb), self._test_function("-")) * 2*pi*self._r* (
             dI(Surface.crystal.value)
             + dI(Surface.melt.value)
@@ -83,6 +84,13 @@ class Heat:
         solver_T.convergence_criterion = "incremental"
         # parameters copied from https://jorgensd.github.io/dolfinx-tutorial/chapter2/hyperelasticity.html
 
-        solver_T.solve(self._solution)
+        # from dolfinx.log import set_log_level, LogLevel
+        # set_log_level(LogLevel.INFO)
+
+        n, converged = solver_T.solve(self._solution)
+        self._solution.x.scatter_forward()
+
+        assert(converged)
+        # print(f"Number of interations: {n:d}")
 
         return self._solution

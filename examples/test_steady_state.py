@@ -28,7 +28,6 @@ from time import time
 
 # DOLFINx Imports
 import dolfinx
-from geometry.czochralski import crystal
 import ufl
 from petsc4py import PETSc
 from mpi4py import MPI
@@ -46,9 +45,9 @@ from geometry.gmsh_helpers import gmsh_model_to_mesh
 from crystalx.equations.maxwell import Maxwell
 from crystalx.equations.heat import Heat
 from crystalx.equations.laplace import Laplace
-from crystalx.equations.interface import Stefan
-from crystalx.time_stepper import OneStepTheta
-from crystalx.transient.auxiliary_methods import interface_normal, normal_velocity, interface_displacement, meniscus_displacement
+
+# crystal-x steady state Imports
+from crystalx.steadystate.auxiliary_methods import set_temperature_scaling, mesh_move
 
 #---------------------------------------------------------------------------------------------------#
 
@@ -138,7 +137,7 @@ vector_element_DG = lambda degree: ufl.VectorElement(
 Space_A = dolfinx.FunctionSpace(mesh, scalar_element(degree=1))  # A
 
 # Function Space for Heat Equation
-Space_T = dolfinx.FunctionSpace(mesh, scalar_element(degree=2))  # T
+Space_T = dolfinx.FunctionSpace(mesh, scalar_element(degree=1))  # T
 
 # Function Space for Interface Displacement in normal direction
 Space_V = dolfinx.FunctionSpace(mesh, scalar_element(degree=1))  # V
@@ -160,9 +159,6 @@ f_heat = 0
 h = 5  # W / (m^2 K)
 
 #---------------------------------------------------------------------------------------------------#
-
-Dt = 1e-4
-t_end = 10 * Dt
 
 v_pull = 4  # mm/min
 v_pull *= 1.6666666e-5  # m/s
@@ -279,59 +275,7 @@ bcs_T = [dolfinx.DirichletBC(value_T, dofs_T)]
 #---------------------------------------------------------------------------------------------------#
 
 heat_problem = Heat(Space_T)
-
-# Set initial temperature via stationary simulation
-heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
-heat_problem.assemble(heat_form, bcs_T)
-_ = heat_problem.solve()
-
-T_old = dolfinx.Function(Space_T)
-with heat_problem.solution.vector.localForm() as loc_T, T_old.vector.localForm() as loc_T_old:
-    # loc_T.set(T_amb)
-    # loc_T_old.set(T_amb)
-    loc_T.copy(loc_T_old)
-
-
-one_step_theta_timestepper = OneStepTheta(heat_problem, 0.5+Dt)
-
-# heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
-heat_form = one_step_theta_timestepper.step(T_old, rho * capacity, 0.0, Dt, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
-
-heat_problem.assemble(heat_form, bcs_T)
-
-#####################################################################################################
-#                                                                                                   #
-#                                   ASSEMBLE STEFAN PROBLEM                                         #
-#                                                                                                   #
-#####################################################################################################
-
-melt_crystal_interface_facets = facet_tags.indices[
-        facet_tags.values == Interface.melt_crystal.value
-    ]
-
-dofs_melt_crystal_interface = dolfinx.fem.locate_dofs_topological(
-    Space_V, 1, melt_crystal_interface_facets 
-)
-
-bcs_V = []
-
-with open("examples/materials/materials.yml") as f:
-    mat_data = yaml.safe_load(f)
-
-latent_heat_value = 5.96e4 * mat_data["melt"]["Density"] # J/m^3
-
-# #---------------------------------------------------------------------------------------------------#
-
-stefan_problem = Stefan(Space_V)
-stefan_a, stefan_L = stefan_problem.setup(stefan_problem.solution, dV, dA, dI, kappa, latent_heat_value, heat_problem.solution)
-stefan_problem.assemble(stefan_a, stefan_L, bcs_V, dofs_melt_crystal_interface)
-_ , normal_velocity_values = stefan_problem.solve(dofs_melt_crystal_interface)
-
-# #---------------------------------------------------------------------------------------------------#
-
-n = interface_normal(Space_V, Interface.melt_crystal, facet_tags)
-normal_velocity_vector = np.repeat(normal_velocity_values.reshape(-1,1), n.shape[1], axis=1) * n 
-
+ 
 #####################################################################################################
 #                                                                                                   #
 #                                   ASSEMBLE MESH MOVEMENT                                          #
@@ -386,69 +330,27 @@ bcs_MM.append(dolfinx.DirichletBC(
     )
 )
 
-#---------------------------------------------------------------------------------------------------#
-# Calculate Displacement Vector on Interface as u = Dt * ((n * (v_pull + v_growth)) n)
-
-v_pull_vector = v_pull * np.repeat(np.array([0.0 , 1.0, 0.0]).reshape(3,1), normal_velocity_vector.shape[0] , axis=1).T
-
-velocity_vector = normal_velocity_vector + v_pull_vector
-
-normal_velocity_vector = normal_velocity(velocity_vector, n)
-
-beta = 10.0 # in degrees
-beta *= np.pi / 180
-
-displacement_vector = interface_displacement(normal_velocity_vector, v_pull_vector, Dt, beta, Space_V, Interface.melt_crystal, Surface.melt, facet_tags)
-#---------------------------------------------------------------------------------------------------#
-
-dofs_melt_crystal_interface = dolfinx.fem.locate_dofs_topological(
-    Space_MM, 1, melt_crystal_interface_facets 
-)
-
-displacement_function = dolfinx.Function(Space_MM, name="displacement_function")
-
-with displacement_function.vector.localForm() as loc:
-    values = loc.getArray()
-    values[2 * dofs_melt_crystal_interface] = displacement_vector[:,0]
-    values[2 * dofs_melt_crystal_interface + 1] = displacement_vector[:,1]
-    loc.setArray(values)
-
-#---------------------------------------------------------------------------------------------------#
-# Calculate the displacement caused by the change of the meniscus shape 
-# meniscus_displacement(displacement_function, Space_MM, Surface.melt, facet_tags) # TODO: Remove error on calculate meniscus
-
 #####################################################################################################
 #                                                                                                   #
-#                                         TIME LOOP                                                 #
+#                                      SOLVING LOOP                                                 #
 #                                                                                                   #
 #####################################################################################################
 
 res_dir = "examples/results/"
-vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "result.pvd", "w")
+vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "steady_state_result.pvd", "w")
 
-for step, t in enumerate(np.arange(0.0, t_end + Dt, Dt)):
-    
-    fields = [heat_problem.solution, stefan_problem.solution, displacement_function]
-    output_fields = [sol._cpp_object for sol in fields]
-    vtk.write_function(output_fields, t)
+set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat, bcs_T, desired_temp=505, interface=Interface.melt_crystal, facet_tags=facet_tags)
+heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
+heat_problem.assemble(heat_form, bcs_T)
 
+_ = heat_problem.solve()
 
-    heat_problem.solve()
-    # mesh_movement_problem.solve()
+mesh_move(heat_problem.solution, Volume.melt, Interface.melt_crystal, cell_tags, facet_tags)
 
-    with heat_problem.solution.vector.localForm() as loc_T, T_old.vector.localForm() as loc_T_old:
-        loc_T.copy(loc_T_old)
+fields = [heat_problem.solution]
+output_fields = [sol._cpp_object for sol in fields]
+vtk.write_function(output_fields)
 
-    if MPI.COMM_WORLD.rank == 0:
-        elapsed = int(time() - start_time)
-        e_h, e_m, e_s = (
-            int(elapsed / 3600),
-            int(elapsed % 3600 / 60),
-            int((elapsed % 3600) % 60),
-        )
-        print(
-            f"step {step}: time {t:.8f} s --- temperature solution in {e_h:.0f} h {e_m:.0f} min {e_s:.0f} s "
-        )
 
 vtk.close()
 
