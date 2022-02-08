@@ -298,14 +298,19 @@ crucible_surface_facets = facet_tags.indices[
         facet_tags.values == Surface.crucible.value
     ]
 
+melt_surface_facets = facet_tags.indices[
+        facet_tags.values == Surface.melt.value
+    ]
+
 melt_crystal_interface_facets = facet_tags.indices[
         facet_tags.values == Interface.melt_crystal.value
     ]
 
 #---------------------------------------------------------------------------------------------------#
+dirichlet_facets = np.concatenate([sourrounding_facets, crucible_surface_facets, crystal_surface_facets, melt_surface_facets])
 
 dofs_hom_dirichlet = dolfinx.fem.locate_dofs_topological(
-    Space_MM, 1, np.concatenate([sourrounding_facets, crucible_surface_facets, crystal_surface_facets]) # TODO: DoFs on crystal surface not quite right 
+    Space_MM, 1, dirichlet_facets
 )
 
 value_MM = dolfinx.Function(Space_MM)
@@ -315,10 +320,11 @@ bcs_MM = [dolfinx.DirichletBC(value_MM, dofs_hom_dirichlet)]
 
 #---------------------------------------------------------------------------------------------------#
 
+dirichlet_x_facets = symmetry_axis_facets
 dofs_symmetry_axis = dolfinx.fem.locate_dofs_topological(
     (Space_MM.sub(0), Space_MM.sub(0).collapse(),),
     1,
-    symmetry_axis_facets,
+    dirichlet_x_facets,
 )
 
 value_MM = dolfinx.Function(Space_MM.sub(0).collapse()) # only BC on x-component
@@ -345,9 +351,9 @@ heat_problem.assemble(heat_form, bcs_T)
 
 _ = heat_problem.solve()
 
-mesh_move(heat_problem.solution, Volume.melt, Interface.melt_crystal, cell_tags, facet_tags)
+dis_fun = mesh_move(heat_problem.solution, Volume, Boundary, Surface, Interface, cell_tags, facet_tags)
 
-fields = [heat_problem.solution]
+fields = [heat_problem.solution, dis_fun]
 output_fields = [sol._cpp_object for sol in fields]
 vtk.write_function(output_fields)
 

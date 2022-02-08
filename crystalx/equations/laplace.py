@@ -13,9 +13,6 @@ class Laplace:
         # solution variable
         self._solution = dolfinx.Function(V, name="V")
 
-        # radial coordinate
-        self._r = ufl.SpatialCoordinate(V.mesh)[0]
-
     @property
     def solution(self):
         return self._solution
@@ -27,7 +24,7 @@ class Laplace:
     def setup(self, V, dV, dA, dI):
         Form = (
             ufl.inner(ufl.grad(V), ufl.grad(self._test_function))
-        ) * 2*pi*self._r*  dV
+        ) * dV
 
         return Form
 
