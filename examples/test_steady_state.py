@@ -47,7 +47,7 @@ from crystalx.equations.heat import Heat
 from crystalx.equations.laplace import Laplace
 
 # crystal-x steady state Imports
-from crystalx.steadystate.auxiliary_methods import set_temperature_scaling, mesh_move
+from crystalx.steadystate.auxiliary_methods import set_temperature_scaling, mesh_move, interface_displacement
 
 #---------------------------------------------------------------------------------------------------#
 
@@ -276,65 +276,6 @@ bcs_T = [dolfinx.DirichletBC(value_T, dofs_T)]
 
 heat_problem = Heat(Space_T)
  
-#####################################################################################################
-#                                                                                                   #
-#                                   ASSEMBLE MESH MOVEMENT                                          #
-#                                                                                                   #
-#####################################################################################################
-
-sourrounding_facets = facet_tags.indices[
-        facet_tags.values == Boundary.surrounding.value
-    ]
-
-symmetry_axis_facets = facet_tags.indices[
-        facet_tags.values == Boundary.symmetry_axis.value
-    ]
-
-crystal_surface_facets = facet_tags.indices[
-        facet_tags.values == Surface.crystal.value
-    ]
-
-crucible_surface_facets = facet_tags.indices[
-        facet_tags.values == Surface.crucible.value
-    ]
-
-melt_surface_facets = facet_tags.indices[
-        facet_tags.values == Surface.melt.value
-    ]
-
-melt_crystal_interface_facets = facet_tags.indices[
-        facet_tags.values == Interface.melt_crystal.value
-    ]
-
-#---------------------------------------------------------------------------------------------------#
-dirichlet_facets = np.concatenate([sourrounding_facets, crucible_surface_facets, crystal_surface_facets, melt_surface_facets])
-
-dofs_hom_dirichlet = dolfinx.fem.locate_dofs_topological(
-    Space_MM, 1, dirichlet_facets
-)
-
-value_MM = dolfinx.Function(Space_MM)
-with value_MM.vector.localForm() as loc:
-    loc.set(0)
-bcs_MM = [dolfinx.DirichletBC(value_MM, dofs_hom_dirichlet)]
-
-#---------------------------------------------------------------------------------------------------#
-
-dirichlet_x_facets = symmetry_axis_facets
-dofs_symmetry_axis = dolfinx.fem.locate_dofs_topological(
-    (Space_MM.sub(0), Space_MM.sub(0).collapse(),),
-    1,
-    dirichlet_x_facets,
-)
-
-value_MM = dolfinx.Function(Space_MM.sub(0).collapse()) # only BC on x-component
-with value_MM.vector.localForm() as loc:
-    loc.set(0)
-
-bcs_MM.append(dolfinx.DirichletBC(
-        value_MM, dofs_symmetry_axis, Space_MM.sub(0)
-    )
-)
 
 #####################################################################################################
 #                                                                                                   #
@@ -345,17 +286,20 @@ bcs_MM.append(dolfinx.DirichletBC(
 res_dir = "examples/results/"
 vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "steady_state_result.pvd", "w")
 
-set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat, bcs_T, desired_temp=505, interface=Interface.melt_crystal, facet_tags=facet_tags)
-heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
-heat_problem.assemble(heat_form, bcs_T)
+for iteration in range(12):
+    print(iteration)
+    set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat, bcs_T, desired_temp=505, interface=Interface.melt_crystal, facet_tags=facet_tags)
+    heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
+    heat_problem.assemble(heat_form, bcs_T)
 
-_ = heat_problem.solve()
+    _ = heat_problem.solve()
 
-dis_fun = mesh_move(heat_problem.solution, Volume, Boundary, Surface, Interface, cell_tags, facet_tags)
+    displacement_function = interface_displacement(heat_problem.solution, Volume, Boundary, Surface, Interface, cell_tags, facet_tags)
 
-fields = [heat_problem.solution, dis_fun]
-output_fields = [sol._cpp_object for sol in fields]
-vtk.write_function(output_fields)
+    fields = [heat_problem.solution, displacement_function]
+    output_fields = [sol._cpp_object for sol in fields]
+    vtk.write_function(output_fields, iteration)
+    mesh_move(mesh, displacement_function)
 
 
 vtk.close()

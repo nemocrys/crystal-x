@@ -61,7 +61,7 @@ def set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigm
 #                                                                                                   #
 #####################################################################################################
 
-def mesh_move(function, Volume, Boundary, Surface, Interface, cell_tags, facet_tags):
+def interface_displacement(function, Volume, Boundary, Surface, Interface, cell_tags, facet_tags):
     melt = Volume.melt
     crystal = Volume.crystal
     interface = Interface.melt_crystal
@@ -115,7 +115,7 @@ def mesh_move(function, Volume, Boundary, Surface, Interface, cell_tags, facet_t
 
     marked_dofs = dofs_with_threshold(function, melt, cell_tags, threshold_function)
     old_interface_coordinates, new_interface_coordinates, moved_dofs = get_new_interface_coordinates(function, marked_dofs, interface, melt, facet_tags, cell_tags, threshold_function)
-    moved_interface = project_graphs(old_interface_coordinates, new_interface_coordinates)
+    moved_interface = project_graphs(old_interface_coordinates, new_interface_coordinates, melt)
     
     interface_facets = facet_tags.indices[
         facet_tags.values == interface.value
@@ -126,8 +126,9 @@ def mesh_move(function, Volume, Boundary, Surface, Interface, cell_tags, facet_t
     )
 
     if moved_interface != []:
+        print("melt:")
+        print(moved_dofs)
         displacement = moved_interface - old_interface_coordinates
-
         with displacement_function.vector.localForm() as loc:
             values = loc.getArray()
             values[2 * moved_dofs] = displacement[:,0]
@@ -140,18 +141,19 @@ def mesh_move(function, Volume, Boundary, Surface, Interface, cell_tags, facet_t
 
     marked_dofs = dofs_with_threshold(function, crystal, cell_tags, threshold_function)
     old_interface_coordinates, new_interface_coordinates, moved_dofs = get_new_interface_coordinates(function, marked_dofs, interface, crystal, facet_tags, cell_tags, threshold_function)
-    moved_interface = project_graphs(old_interface_coordinates, new_interface_coordinates)
+    moved_interface = project_graphs(old_interface_coordinates, new_interface_coordinates, crystal)
     
     if moved_interface != []:
+        print("crystal:")
+        print(moved_dofs)
         displacement = moved_interface - old_interface_coordinates
-
-
         with displacement_function.vector.localForm() as loc:
             values = loc.getArray()
             values[2 * moved_dofs] = displacement[:,0]
             values[2 * moved_dofs + 1] = displacement[:,1]
             loc.setArray(values)
 
+    #---------------------------------------------------------------------------------------------------#
     # set displacement as dirichlet BC
     interface_facets = facet_tags.indices[
         facet_tags.values == interface.value
@@ -216,13 +218,15 @@ def mesh_move(function, Volume, Boundary, Surface, Interface, cell_tags, facet_t
         )
     )
 
-
     #---------------------------------------------------------------------------------------------------#
     # setup and solve mesh move problem
     laplace_problem.assemble(form_MM, bcs_MM)
     laplace_problem.solve()    
 
     return laplace_problem.solution
+
+def mesh_move(mesh, displacement):
+    mesh.geometry.x[:, :2] += displacement.compute_point_values().real
 
 
 def dofs_with_threshold(function, volume, cell_tags, threshold_function):
@@ -315,26 +319,34 @@ def get_new_interface_coordinates(function, marked_dofs, interface, volume, face
         min_x_coord_on_old_interface = old_interface_coordinates[:,0].min()
         max_x_coord_on_old_interface = old_interface_coordinates[:,0].max()
 
+
     # TODO: the last/first coordinate is wrong somehow:
     # if interface_coords.shape[0] > 1 and over_threshold:
     #     if not np.isclose(min_x_coord_on_old_interface, interface_coords[0, 0]):
     #         interface_coords = interface_coords[:-1,:]
     # if interface_coords.shape[0] > 1 and not over_threshold:
     #     interface_coords = interface_coords[1:,:]
-    if interface_coords.shape[0] > 1 and len(dofs_to_move_on_interface) > 0:
-        if not np.isclose(min_x_coord_on_old_interface, interface_coords[0, 0]):
+    # if interface_coords.shape[0] > 1 and len(dofs_to_move_on_interface) > 0:
+        mesh = function.function_space.mesh
+        tdim = mesh.topology.dim
+        num_cells = mesh.topology.index_map(tdim).size_local
+        h_min = dolfinx.cpp.mesh.h(mesh, tdim, range(num_cells)).min()
+        print(h_min)
+        if not np.isclose(min_x_coord_on_old_interface, interface_coords[0, 0], atol= h_min * 1e-2):
+            print(f"Delete first point in {volume.name}")
             interface_coords = interface_coords[1:,:]
 
-        if not np.isclose(max_x_coord_on_old_interface, interface_coords[-1, 0]):
+        if not np.isclose(max_x_coord_on_old_interface, interface_coords[-1, 0] , atol = h_min * 1e-2):
+            print(f"Delete last point in {volume.name}")
             interface_coords = interface_coords[:-1,:]
     
     if interface_coords != []:
         fig, ax = plt.subplots(1,1)
-        ax.plot(interface_coords[:,0], interface_coords[:,1])
-        ax.plot(coordinates[dofs_interface][:,0], coordinates[dofs_interface][:,1])
-        fig.savefig("interface.png")
+        ax.plot(interface_coords[:,0], interface_coords[:,1], '--go')
+        ax.plot(coordinates[dofs_to_move_on_interface][:,0], coordinates[dofs_to_move_on_interface][:,1], '--r^')
+        fig.savefig(f"interface1_{volume.name}.png")
 
-    return coordinates[dofs_interface], interface_coords, dofs_to_move_on_interface
+    return coordinates[dofs_to_move_on_interface], interface_coords, dofs_to_move_on_interface
 
 def calculate_graph_coordinates(coordinates):
     """
@@ -359,7 +371,7 @@ def calculate_graph_coordinates(coordinates):
 
     return tau[inverse_permutation]
 
-def project_graphs(old_coordinates, new_coordinates):
+def project_graphs(old_coordinates, new_coordinates, volume):
     """
     Project the old graph on the new graph by their specific graph coordinate.
     """
@@ -405,11 +417,13 @@ def project_graphs(old_coordinates, new_coordinates):
 
         moved_coordinates = moved_coordinates.T
 
+        permutation = np.argsort(moved_coordinates[:, 0])
+    
         fig, ax = plt.subplots(1,1)
-        ax.plot(old_coordinates[:,0],old_coordinates[:,1], '-ro')
+        ax.plot(moved_coordinates[permutation][:, 0], moved_coordinates[permutation][:, 1], '--bs')
         ax.plot(new_coordinates[:, 0], new_coordinates[:, 1], '--go')
-        ax.plot(moved_coordinates[:, 0], moved_coordinates[:, 1], '--bo')
+        ax.plot(old_coordinates[:,0],old_coordinates[:,1], '--r^')
         # ax.set_aspect('equal', 'box')
-        fig.savefig("interface.png")
+        fig.savefig(f"interface_{volume.name}.png")
 
     return moved_coordinates
