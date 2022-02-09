@@ -73,10 +73,16 @@ gdim = 2  # gmsh dimension / geometric dimension
 gmsh_model = create_geometry()
 
 # Loading of mesh, cell tags and facet tags
-mesh, cell_tags, facet_tags = gmsh_model_to_mesh(
-    gmsh_model, cell_data=True, facet_data=True, gdim=gdim
-)
+# mesh, cell_tags, facet_tags = gmsh_model_to_mesh(
+#     gmsh_model, cell_data=True, facet_data=True, gdim=gdim
+# )
 
+with dolfinx.io.XDMFFile(MPI.COMM_WORLD, "mesh.xdmf", "r") as xdmf:
+    mesh = xdmf.read_mesh(name="mesh")
+    cell_tags = xdmf.read_meshtags(mesh, name="Cell tags")
+mesh.topology.create_connectivity(mesh.topology.dim, mesh.topology.dim-1)
+with dolfinx.io.XDMFFile(MPI.COMM_WORLD, "mt.xdmf", "r") as xdmf:
+    facet_tags = xdmf.read_meshtags(mesh, name="Facet tags")
 #####################################################################################################
 #                                                                                                   #
 #                                   SETTING FUNCTION SPACES                                         #

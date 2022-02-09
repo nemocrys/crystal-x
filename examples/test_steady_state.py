@@ -312,12 +312,12 @@ vtk.close()
 # #                                                                                                   #
 # #####################################################################################################
 
-# res_dir = "examples/results/"
+res_dir = "examples/results/"
 
-# fields = [A, T]
-# output_fields = [sol._cpp_object for sol in fields]
+with dolfinx.io.XDMFFile(MPI.COMM_WORLD, "mesh.xdmf", "w") as xdmf:
+    xdmf.write_mesh(mesh)
+    xdmf.write_meshtags(cell_tags)
 
-# vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "result.pvd", "w")
+with dolfinx.io.XDMFFile(MPI.COMM_WORLD, "mt.xdmf", "w") as xdmf:
+    xdmf.write_meshtags(facet_tags)
 
-# vtk.write_function(output_fields)
-# vtk.close()
