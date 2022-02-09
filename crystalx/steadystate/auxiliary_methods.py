@@ -126,8 +126,6 @@ def interface_displacement(function, Volume, Boundary, Surface, Interface, cell_
     )
 
     if moved_interface != []:
-        print("melt:")
-        print(moved_dofs)
         displacement = moved_interface - old_interface_coordinates
         with displacement_function.vector.localForm() as loc:
             values = loc.getArray()
@@ -144,8 +142,6 @@ def interface_displacement(function, Volume, Boundary, Surface, Interface, cell_
     moved_interface = project_graphs(old_interface_coordinates, new_interface_coordinates, crystal)
     
     if moved_interface != []:
-        print("crystal:")
-        print(moved_dofs)
         displacement = moved_interface - old_interface_coordinates
         with displacement_function.vector.localForm() as loc:
             values = loc.getArray()
@@ -319,32 +315,22 @@ def get_new_interface_coordinates(function, marked_dofs, interface, volume, face
         min_x_coord_on_old_interface = old_interface_coordinates[:,0].min()
         max_x_coord_on_old_interface = old_interface_coordinates[:,0].max()
 
-
-    # TODO: the last/first coordinate is wrong somehow:
-    # if interface_coords.shape[0] > 1 and over_threshold:
-    #     if not np.isclose(min_x_coord_on_old_interface, interface_coords[0, 0]):
-    #         interface_coords = interface_coords[:-1,:]
-    # if interface_coords.shape[0] > 1 and not over_threshold:
-    #     interface_coords = interface_coords[1:,:]
-    # if interface_coords.shape[0] > 1 and len(dofs_to_move_on_interface) > 0:
         mesh = function.function_space.mesh
         tdim = mesh.topology.dim
         num_cells = mesh.topology.index_map(tdim).size_local
         h_min = dolfinx.cpp.mesh.h(mesh, tdim, range(num_cells)).min()
-        print(h_min)
-        if not np.isclose(min_x_coord_on_old_interface, interface_coords[0, 0], atol= h_min * 1e-2):
-            print(f"Delete first point in {volume.name}")
+
+        if not np.isclose(min_x_coord_on_old_interface, interface_coords[0, 0], atol= h_min / 10):
             interface_coords = interface_coords[1:,:]
 
-        if not np.isclose(max_x_coord_on_old_interface, interface_coords[-1, 0] , atol = h_min * 1e-2):
-            print(f"Delete last point in {volume.name}")
+        if not np.isclose(max_x_coord_on_old_interface, interface_coords[-1, 0] , atol = h_min / 10):
             interface_coords = interface_coords[:-1,:]
     
-    if interface_coords != []:
-        fig, ax = plt.subplots(1,1)
-        ax.plot(interface_coords[:,0], interface_coords[:,1], '--go')
-        ax.plot(coordinates[dofs_to_move_on_interface][:,0], coordinates[dofs_to_move_on_interface][:,1], '--r^')
-        fig.savefig(f"interface1_{volume.name}.png")
+    # if interface_coords != []:
+    #     fig, ax = plt.subplots(1,1)
+    #     ax.plot(interface_coords[:,0], interface_coords[:,1], '--go')
+    #     ax.plot(coordinates[dofs_to_move_on_interface][:,0], coordinates[dofs_to_move_on_interface][:,1], '--r^')
+    #     fig.savefig(f"interface1_{volume.name}.png")
 
     return coordinates[dofs_to_move_on_interface], interface_coords, dofs_to_move_on_interface
 
@@ -367,7 +353,9 @@ def calculate_graph_coordinates(coordinates):
     for i in range(number_of_coordinates - 1):
         tau.append(tau[-1] + np.linalg.norm(coordinates_of_dofs[:, i] - coordinates_of_dofs[:, i+1]))
 
-    tau = np.array(tau) / tau[-1]
+    tau = np.array(tau)
+    if len(tau) > 1:
+        tau = tau / tau[-1]
 
     return tau[inverse_permutation]
 
@@ -419,11 +407,11 @@ def project_graphs(old_coordinates, new_coordinates, volume):
 
         permutation = np.argsort(moved_coordinates[:, 0])
     
-        fig, ax = plt.subplots(1,1)
-        ax.plot(moved_coordinates[permutation][:, 0], moved_coordinates[permutation][:, 1], '--bs')
-        ax.plot(new_coordinates[:, 0], new_coordinates[:, 1], '--go')
-        ax.plot(old_coordinates[:,0],old_coordinates[:,1], '--r^')
-        # ax.set_aspect('equal', 'box')
-        fig.savefig(f"interface_{volume.name}.png")
+        # fig, ax = plt.subplots(1,1)
+        # ax.plot(moved_coordinates[permutation][:, 0], moved_coordinates[permutation][:, 1], '--bs')
+        # ax.plot(new_coordinates[:, 0], new_coordinates[:, 1], '--go')
+        # ax.plot(old_coordinates[:,0],old_coordinates[:,1], '--r^')
+        # # ax.set_aspect('equal', 'box')
+        # fig.savefig(f"interface_{volume.name}.png")
 
     return moved_coordinates
