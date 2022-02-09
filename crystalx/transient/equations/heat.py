@@ -20,7 +20,7 @@ class Heat:
         # radial coordinate
         self._r = ufl.SpatialCoordinate(V.mesh)[0]
 
-        self._heat_scaling = 2.76661542784358 # Value from Steady state
+        self._heat_scaling = 2.770694216432116 # Value from Steady state
 
     @property
     def solution(self):
@@ -58,15 +58,8 @@ class Heat:
                 * 2*pi*self._r* dI(surf.value)
             )
 
-        # TODO additional heat source for phase boundary
-        v_pull = 4  # mm/min
-        v_pull *= 1.6666666e-5  # m/s
-        latent_heat_value = 5.96e4 * mat_data["melt"]["Density"] * v_pull  # W/m^2 #TODO: WRONG !!! v_growth is needed and is not uniform!!!!
-    
-        Form_T += (
-            ufl.inner(-latent_heat_value, self._test_function("+")) 
-            * 2*pi*self._r* dI(Interface.melt_crystal.value)
-        )
+        # Weakly impose Dirichlet Boundary Conditions on melt-crystal Interface
+        Form_T += 1.0 / 1e-12 * ufl.inner(ufl.avg(T) - 505.08, ufl.avg(self.test_function)) * 2*pi*self._r* dI(Interface.melt_crystal.value)
 
         return Form_T
 

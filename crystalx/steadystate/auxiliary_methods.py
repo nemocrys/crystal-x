@@ -6,7 +6,7 @@ from scipy import optimize
 
 import matplotlib.pyplot as plt
 
-from ..equations.laplace import Laplace
+from .equations.laplace import Laplace
 #####################################################################################################
 #                                                                                                   #
 #                                     TEMPERATURE SCALING                                           #
@@ -61,7 +61,7 @@ def set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigm
 #                                                                                                   #
 #####################################################################################################
 
-def interface_displacement(function, Volume, Boundary, Surface, Interface, cell_tags, facet_tags):
+def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interface, cell_tags, facet_tags):
     melt = Volume.melt
     crystal = Volume.crystal
     interface = Interface.melt_crystal
@@ -111,10 +111,10 @@ def interface_displacement(function, Volume, Boundary, Surface, Interface, cell_
     # calculate displacement on melt crystal interface 
 
     # move wrong dofs in melt
-    threshold_function = lambda value: value <= 505.
+    threshold_function = lambda value: value <= T_melt
 
     marked_dofs = dofs_with_threshold(function, melt, cell_tags, threshold_function)
-    old_interface_coordinates, new_interface_coordinates, moved_dofs = get_new_interface_coordinates(function, marked_dofs, interface, melt, facet_tags, cell_tags, threshold_function)
+    old_interface_coordinates, new_interface_coordinates, moved_dofs = get_new_interface_coordinates(function, T_melt, marked_dofs, interface, melt, facet_tags, cell_tags, threshold_function)
     moved_interface = project_graphs(old_interface_coordinates, new_interface_coordinates, melt)
     
     interface_facets = facet_tags.indices[
@@ -135,10 +135,10 @@ def interface_displacement(function, Volume, Boundary, Surface, Interface, cell_
 
     #---------------------------------------------------------------------------------------------------#
     # move wrong dofs in crystal
-    threshold_function = lambda value: value > 505.
+    threshold_function = lambda value: value > T_melt
 
     marked_dofs = dofs_with_threshold(function, crystal, cell_tags, threshold_function)
-    old_interface_coordinates, new_interface_coordinates, moved_dofs = get_new_interface_coordinates(function, marked_dofs, interface, crystal, facet_tags, cell_tags, threshold_function)
+    old_interface_coordinates, new_interface_coordinates, moved_dofs = get_new_interface_coordinates(function, T_melt, marked_dofs, interface, crystal, facet_tags, cell_tags, threshold_function)
     moved_interface = project_graphs(old_interface_coordinates, new_interface_coordinates, crystal)
     
     if moved_interface != []:
@@ -240,7 +240,7 @@ def dofs_with_threshold(function, volume, cell_tags, threshold_function):
     
     return dofs_volume[threshold_function(local_Values)]
 
-def get_new_interface_coordinates(function, marked_dofs, interface, volume, facet_tags, cell_tags, threshold_function):
+def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volume, facet_tags, cell_tags, threshold_function):
     
     volume_cells = cell_tags.indices[
         cell_tags.values == volume.value
@@ -278,7 +278,7 @@ def get_new_interface_coordinates(function, marked_dofs, interface, volume, face
     function_values = function.compute_point_values().real
 
     coordinates = function.function_space.mesh.geometry.x
-    threshold = 505.
+    threshold = T_melt
 
     for cell_id in cell_ids:
         cell = function.function_space.dofmap.cell_dofs(cell_id)
@@ -320,10 +320,10 @@ def get_new_interface_coordinates(function, marked_dofs, interface, volume, face
         num_cells = mesh.topology.index_map(tdim).size_local
         h_min = dolfinx.cpp.mesh.h(mesh, tdim, range(num_cells)).min()
 
-        if not np.isclose(min_x_coord_on_old_interface, interface_coords[0, 0], atol= h_min / 10):
+        if not np.isclose(min_x_coord_on_old_interface, interface_coords[0, 0], atol= h_min / 20):
             interface_coords = interface_coords[1:,:]
 
-        if not np.isclose(max_x_coord_on_old_interface, interface_coords[-1, 0] , atol = h_min / 10):
+        if not np.isclose(max_x_coord_on_old_interface, interface_coords[-1, 0] , atol = h_min / 20):
             interface_coords = interface_coords[:-1,:]
     
     # if interface_coords != []:

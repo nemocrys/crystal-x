@@ -218,6 +218,12 @@ _deps
 *.visit
 *.pvd
 *.gpl
+*.h5
+*.xdmf
+*.dat
+*.dat.info
+*.png
+*.txt
 
 # Python compiled modules
 *.pyc

@@ -28,7 +28,6 @@ from time import time
 
 # DOLFINx Imports
 import dolfinx
-from geometry.czochralski import crystal
 import ufl
 from petsc4py import PETSc
 from mpi4py import MPI
@@ -41,14 +40,23 @@ from geometry.geometry import Volume, Interface, Surface, Boundary
 from geometry.gmsh_helpers import gmsh_model_to_mesh
 
 #---------------------------------------------------------------------------------------------------#
+# transient Imports
 
-# crystal-x Imports
-from crystalx.equations.maxwell import Maxwell
-from crystalx.equations.heat import Heat
-from crystalx.equations.laplace import Laplace
-from crystalx.equations.interface import Stefan
-from crystalx.time_stepper import OneStepTheta
+# crystal-x equations
+from crystalx.transient.equations.maxwell import Maxwell
+from crystalx.transient.equations.heat import Heat
+from crystalx.transient.equations.interface import Stefan
+
+# crystal-x time-stepping
+from crystalx.transient.time_stepper import OneStepTheta
+
+# crystal-x auxiliary methods
 from crystalx.transient.auxiliary_methods import interface_normal, normal_velocity, interface_displacement, meniscus_displacement
+
+#---------------------------------------------------------------------------------------------------#
+
+# crystal-x helpers
+from crystalx.helpers import load_function, load_mesh, project
 
 #---------------------------------------------------------------------------------------------------#
 
@@ -70,19 +78,16 @@ start_time = time()
 #####################################################################################################
 
 gdim = 2  # gmsh dimension / geometric dimension
-gmsh_model = create_geometry()
 
 # Loading of mesh, cell tags and facet tags
-# mesh, cell_tags, facet_tags = gmsh_model_to_mesh(
-#     gmsh_model, cell_data=True, facet_data=True, gdim=gdim
-# )
+try:
+    mesh, cell_tags, facet_tags = load_mesh(MPI.COMM_WORLD, "mesh.xdmf")
+except:
+    gmsh_model = create_geometry()
+    mesh, cell_tags, facet_tags = gmsh_model_to_mesh(
+        gmsh_model, cell_data=True, facet_data=True, gdim=gdim
+    )
 
-with dolfinx.io.XDMFFile(MPI.COMM_WORLD, "mesh.xdmf", "r") as xdmf:
-    mesh = xdmf.read_mesh(name="mesh")
-    cell_tags = xdmf.read_meshtags(mesh, name="Cell tags")
-mesh.topology.create_connectivity(mesh.topology.dim, mesh.topology.dim-1)
-with dolfinx.io.XDMFFile(MPI.COMM_WORLD, "mt.xdmf", "r") as xdmf:
-    facet_tags = xdmf.read_meshtags(mesh, name="Facet tags")
 #####################################################################################################
 #                                                                                                   #
 #                                   SETTING FUNCTION SPACES                                         #
@@ -145,6 +150,7 @@ Space_A = dolfinx.FunctionSpace(mesh, scalar_element(degree=1))  # A
 
 # Function Space for Heat Equation
 Space_T = dolfinx.FunctionSpace(mesh, scalar_element(degree=2))  # T
+Space_T_0 = dolfinx.FunctionSpace(mesh, scalar_element(degree=1))  # T_0
 
 # Function Space for Interface Displacement in normal direction
 Space_V = dolfinx.FunctionSpace(mesh, scalar_element(degree=1))  # V
@@ -158,7 +164,8 @@ Space_MM = dolfinx.FunctionSpace(mesh, vector_element(degree=1)) # MM
 #####################################################################################################
 
 # Ambient Temperature
-T_amb = 293.15#300.0  # K
+T_amb = 293.15 # K
+T_melt = 505.08 # K
 
 # Heat source
 f_heat = 0
@@ -168,7 +175,7 @@ h = 5  # W / (m^2 K)
 #---------------------------------------------------------------------------------------------------#
 
 Dt = 1e-4
-t_end = 10 * Dt
+t_end = 100 * Dt
 
 v_pull = 4  # mm/min
 v_pull *= 1.6666666e-5  # m/s
@@ -271,7 +278,12 @@ coil_inside_facets = facet_tags.indices[
     facet_tags.values == Surface.inductor_inside.value
 ]
 
+interface_facets = facet_tags.indices[
+    facet_tags.values == Interface.melt_crystal
+]
+
 #---------------------------------------------------------------------------------------------------#
+# Set ambient temperature on boundaries
 
 dofs_T = dolfinx.fem.locate_dofs_topological(
     Space_T, 1, np.concatenate([coil_inside_facets, sourrounding_facets, insulation_bottom_facets])
@@ -283,24 +295,59 @@ with value_T.vector.localForm() as loc:
 bcs_T = [dolfinx.DirichletBC(value_T, dofs_T)]
 
 #---------------------------------------------------------------------------------------------------#
+# Set melting temperature on crystal melt interface 
+
+dofs_interface = dolfinx.fem.locate_dofs_topological(
+    Space_T, 1, interface_facets
+)
+
+value_T = dolfinx.Function(Space_T)
+with value_T.vector.localForm() as loc:
+    values = loc.getArray()
+    values[dofs_interface] = T_melt * np.ones(shape=(len(dofs_interface),))
+    loc.setArray(values)
+bcs_T.append(dolfinx.DirichletBC(value_T, dofs_interface))
+
+#---------------------------------------------------------------------------------------------------#
 
 heat_problem = Heat(Space_T)
 
+#---------------------------------------------------------------------------------------------------#
+# Not sure if needed
+interface_facets = facet_tags.indices[
+    facet_tags.values == Interface.melt_crystal
+]
+
+dofs_interface = dolfinx.fem.locate_dofs_topological(
+    Space_T, 1, interface_facets
+)
+
+with heat_problem.solution.vector.localForm() as loc:
+    values = loc.getArray()
+    values[dofs_interface] = T_melt * np.ones(shape=(len(dofs_interface),))
+    loc.setArray(values)
+
+#---------------------------------------------------------------------------------------------------#
+
+
+
 # Set initial temperature via stationary simulation
-heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
-heat_problem.assemble(heat_form, bcs_T)
-_ = heat_problem.solve()
+# heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
+# heat_problem.assemble(heat_form, bcs_T)
+
+# _ = heat_problem.solve()
+
+initial_solution = load_function(Space_T_0, "steadystate_solution.txt")
+initial_solution = project(initial_solution, Space_T)
 
 T_old = dolfinx.Function(Space_T)
-with heat_problem.solution.vector.localForm() as loc_T, T_old.vector.localForm() as loc_T_old:
-    # loc_T.set(T_amb)
-    # loc_T_old.set(T_amb)
-    loc_T.copy(loc_T_old)
+with initial_solution.vector.localForm() as loc_T_0, heat_problem.solution.vector.localForm() as loc_T,  T_old.vector.localForm() as loc_T_old:
+    loc_T_0.copy(loc_T)
+    loc_T_0.copy(loc_T_old)
 
 
 one_step_theta_timestepper = OneStepTheta(heat_problem, 0.5+Dt)
 
-# heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
 heat_form = one_step_theta_timestepper.step(T_old, rho * capacity, 0.0, Dt, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
 
 heat_problem.assemble(heat_form, bcs_T)
@@ -432,13 +479,12 @@ with displacement_function.vector.localForm() as loc:
 res_dir = "examples/results/"
 vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "result.pvd", "w")
 
-for step, t in enumerate(np.arange(0.0, t_end + Dt, Dt)):
-    
+for step, t in enumerate(np.arange(0, t_end + Dt, Dt)):
     fields = [heat_problem.solution, stefan_problem.solution, displacement_function]
     output_fields = [sol._cpp_object for sol in fields]
     vtk.write_function(output_fields, t)
 
-
+    heat_problem.assemble(heat_form, bcs_T)
     heat_problem.solve()
     # mesh_movement_problem.solve()
 

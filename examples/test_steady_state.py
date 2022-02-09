@@ -40,14 +40,19 @@ from geometry.geometry import Volume, Interface, Surface, Boundary
 from geometry.gmsh_helpers import gmsh_model_to_mesh
 
 #---------------------------------------------------------------------------------------------------#
+# steady state Imports
 
-# crystal-x Imports
-from crystalx.equations.maxwell import Maxwell
-from crystalx.equations.heat import Heat
-from crystalx.equations.laplace import Laplace
+# crystal-x Equations
+from crystalx.steadystate.equations.maxwell import Maxwell
+from crystalx.steadystate.equations.heat import Heat
 
-# crystal-x steady state Imports
+# crystal-x auxiliary methods
 from crystalx.steadystate.auxiliary_methods import set_temperature_scaling, mesh_move, interface_displacement
+
+#---------------------------------------------------------------------------------------------------#
+
+# crystal-x helpers
+from crystalx.helpers import save_function, save_mesh
 
 #---------------------------------------------------------------------------------------------------#
 
@@ -152,6 +157,9 @@ Space_MM = dolfinx.FunctionSpace(mesh, vector_element(degree=1)) # MM
 
 # Ambient Temperature
 T_amb = 293.15#300.0  # K
+
+# Melting Temperature
+T_melt = 505.08 #K
 
 # Heat source
 f_heat = 0
@@ -288,13 +296,13 @@ vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "steady_state_result.pvd", "w
 
 for iteration in range(10):
     print(f"Mesh update iteration {iteration}")
-    set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat, bcs_T, desired_temp=505, interface=Interface.melt_crystal, facet_tags=facet_tags)
+    set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat, bcs_T, desired_temp=T_melt, interface=Interface.melt_crystal, facet_tags=facet_tags)
     heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
     heat_problem.assemble(heat_form, bcs_T)
 
     _ = heat_problem.solve()
 
-    displacement_function = interface_displacement(heat_problem.solution, Volume, Boundary, Surface, Interface, cell_tags, facet_tags)
+    displacement_function = interface_displacement(heat_problem.solution, T_melt, Volume, Boundary, Surface, Interface, cell_tags, facet_tags)
 
     fields = [heat_problem.solution, displacement_function]
     output_fields = [sol._cpp_object for sol in fields]
@@ -314,10 +322,8 @@ vtk.close()
 
 res_dir = "examples/results/"
 
-with dolfinx.io.XDMFFile(MPI.COMM_WORLD, "mesh.xdmf", "w") as xdmf:
-    xdmf.write_mesh(mesh)
-    xdmf.write_meshtags(cell_tags)
+# Save Mesh as initial geometry for transient
+save_mesh(mesh, cell_tags, facet_tags, MPI.COMM_WORLD)
 
-with dolfinx.io.XDMFFile(MPI.COMM_WORLD, "mt.xdmf", "w") as xdmf:
-    xdmf.write_meshtags(facet_tags)
-
+# Save steadystate solution as initial condition
+save_function(heat_problem.solution, name="steadystate_solution")
