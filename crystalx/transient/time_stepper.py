@@ -11,6 +11,6 @@ class OneStepTheta:
         old_F = self._problem.setup(old_solution, dV, *kwargs)
         new_F = self._problem.setup(self._problem.solution, dV, *kwargs)
 
-        Form = scaling * ufl.inner(self._problem.solution - old_solution, self._problem.test_function) * dV + Dt * ( self._theta * new_F - (1 - self._theta) * old_F )
-
+        # Form = scaling * ufl.inner(self._problem.solution - old_solution, self._problem.test_function) * dV + Dt * ( self._theta * new_F - (1 - self._theta) * old_F )
+        Form = scaling/Dt * ufl.inner(self._problem.solution - old_solution, self._problem.test_function) * dV + new_F
         return Form

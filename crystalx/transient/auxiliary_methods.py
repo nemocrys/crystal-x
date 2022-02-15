@@ -5,6 +5,11 @@ from geometry.geometry import Interface
 import ufl
 from mpi4py import MPI
 
+from .equations.laplace import Laplace
+
+def reset_values(function):
+    with function.vector.localForm() as loc:
+        loc.set(0)
 
 def interface_normal(function_space, interface, facet_tags):
     interface_facets = facet_tags.indices[
@@ -161,6 +166,142 @@ def interface_normal(function_space, interface, facet_tags):
 #     normal_velocity_vector = np.repeat(normal_projection, 3, axis = 1) * normals
     
 #     return normal_velocity_vector
+def mesh_displacement(displacement_function, Volume, Boundary, Surface, Interface, cell_tags, facet_tags):
+    melt = Volume.melt
+    crystal = Volume.crystal
+    interface = Interface.melt_crystal
+    
+    # Setup mesh movement problem
+    mesh = displacement_function.function_space.mesh
+    
+    # Volume Element
+    dV = ufl.Measure(
+        "dx",
+        domain=mesh,
+        subdomain_data=cell_tags,  # cells_mat,
+        metadata={"quadrature_degree": 2, "quadrature_scheme": "uflacs"},
+    )
+    
+    # Boundary Element (for boundaries on the outside of the computational domain)
+    dA = ufl.Measure(
+        "ds",
+        domain=mesh,
+        subdomain_data=facet_tags,
+        metadata={"quadrature_degree": 2, "quadrature_scheme": "uflacs"},
+    )
+
+    # Interface Element (for boundaries on the inside of the computational domain)
+    dI = ufl.Measure(
+        "dS",
+        domain=mesh,
+        subdomain_data=facet_tags,
+        metadata={"quadrature_degree": 2, "quadrature_scheme": "uflacs"},
+    )
+
+    vector_element = ufl.VectorElement(
+    "CG", mesh.ufl_cell(), 1
+    )
+
+    laplace_problem = Laplace(displacement_function.function_space)
+    form_MM = laplace_problem.setup(laplace_problem.solution, dV, dA, dI)
+
+
+    #---------------------------------------------------------------------------------------------------#
+    # Set Dirichlet Boundary Conditions
+    
+    #---------------------------------------------------------------------------------------------------#
+    # set displacement as dirichlet BC
+    interface_facets = facet_tags.indices[
+        facet_tags.values == interface.value
+    ]
+
+    dofs_interface = dolfinx.fem.locate_dofs_topological(
+        displacement_function.function_space, 1, interface_facets
+    )
+
+    bcs_MM = [dolfinx.DirichletBC(displacement_function, dofs_interface)]
+
+    #---------------------------------------------------------------------------------------------------#
+    # set other boundary conditions
+
+    sourrounding_facets = facet_tags.indices[
+        facet_tags.values == Boundary.surrounding.value
+    ]
+
+    symmetry_axis_facets = facet_tags.indices[
+            facet_tags.values == Boundary.symmetry_axis.value
+        ]
+
+    crystal_surface_facets = facet_tags.indices[
+            facet_tags.values == Surface.crystal.value
+        ]
+
+    crucible_surface_facets = facet_tags.indices[
+            facet_tags.values == Surface.crucible.value
+        ]
+
+    melt_surface_facets = facet_tags.indices[
+            facet_tags.values == Surface.melt.value
+        ]
+
+    #---------------------------------------------------------------------------------------------------#
+    dirichlet_facets = np.concatenate([sourrounding_facets, crucible_surface_facets])
+
+    dofs_hom_dirichlet = dolfinx.fem.locate_dofs_topological(
+        displacement_function.function_space, 1, dirichlet_facets
+    )
+
+    value_MM = dolfinx.Function(displacement_function.function_space)
+    with value_MM.vector.localForm() as loc:
+        loc.set(0)
+    bcs_MM.append(dolfinx.DirichletBC(value_MM, dofs_hom_dirichlet))
+
+    #---------------------------------------------------------------------------------------------------#
+
+    dirichlet_x_facets = symmetry_axis_facets
+    dofs_symmetry_axis = dolfinx.fem.locate_dofs_topological(
+        (displacement_function.function_space.sub(0), displacement_function.function_space.sub(0).collapse(),),
+        1,
+        dirichlet_x_facets,
+    )
+
+    value_MM = dolfinx.Function(displacement_function.function_space.sub(0).collapse()) # only BC on x-component
+    with value_MM.vector.localForm() as loc:
+        loc.set(0)
+
+    bcs_MM.append(dolfinx.DirichletBC(
+            value_MM, dofs_symmetry_axis, displacement_function.function_space.sub(0)
+        )
+    )
+
+    #---------------------------------------------------------------------------------------------------#
+    # setup and solve mesh move problem
+    laplace_problem.assemble(form_MM, bcs_MM)
+    laplace_problem.solve()    
+
+    return laplace_problem.solution
+
+def mesh_move(mesh, displacement):
+    mesh.geometry.x[:, :2] += displacement.compute_point_values().real
+    
+
+def interface_displacement(displacement_function, normal_velocity_vector, v_pull_vector, Dt, beta, function_space, interface, meniscus, facet_tags):
+    disp_vector = displacement_vector(normal_velocity_vector, v_pull_vector, Dt, beta, function_space, interface, meniscus, facet_tags)
+
+    interface_facets = facet_tags.indices[
+        facet_tags.values == interface.value
+    ]
+
+    dofs_melt_crystal_interface = dolfinx.fem.locate_dofs_topological(
+    displacement_function.function_space, 1, interface_facets 
+    )
+
+    with displacement_function.vector.localForm() as loc:
+        values = loc.getArray()
+        values[2 * dofs_melt_crystal_interface] = disp_vector[:,0]
+        values[2 * dofs_melt_crystal_interface + 1] = disp_vector[:,1]
+        loc.setArray(values)
+
 
 def normal_velocity(velocity_vector, normals):
     # Projection of the velocity vector into the normal direction
@@ -169,7 +310,7 @@ def normal_velocity(velocity_vector, normals):
     
     return normal_velocity_vector
 
-def interface_displacement(normal_velocity_vector, v_pull_vector, Dt, beta, function_space, interface, meniscus, facet_tags):
+def displacement_vector(normal_velocity_vector, v_pull_vector, Dt, beta, function_space, interface, meniscus, facet_tags):
     interface_facets = facet_tags.indices[
         facet_tags.values == interface.value
     ]

@@ -51,7 +51,7 @@ from crystalx.transient.equations.interface import Stefan
 from crystalx.transient.time_stepper import OneStepTheta
 
 # crystal-x auxiliary methods
-from crystalx.transient.auxiliary_methods import interface_normal, normal_velocity, interface_displacement, meniscus_displacement
+from crystalx.transient.auxiliary_methods import interface_normal, normal_velocity, interface_displacement, meniscus_displacement, mesh_displacement, mesh_move, reset_values
 
 #---------------------------------------------------------------------------------------------------#
 
@@ -163,6 +163,12 @@ Space_MM = dolfinx.FunctionSpace(mesh, vector_element(degree=1)) # MM
 #                                                                                                   #
 #####################################################################################################
 
+#Specific growing angle
+beta = 10.0 # in degrees
+beta *= np.pi / 180
+
+#---------------------------------------------------------------------------------------------------#
+
 # Ambient Temperature
 T_amb = 293.15 # K
 T_melt = 505.08 # K
@@ -174,8 +180,8 @@ h = 5  # W / (m^2 K)
 
 #---------------------------------------------------------------------------------------------------#
 
-Dt = 1e-4
-t_end = 100 * Dt
+Dt = 1e-2
+t_end = 1000 * Dt
 
 v_pull = 4  # mm/min
 v_pull *= 1.6666666e-5  # m/s
@@ -279,7 +285,7 @@ coil_inside_facets = facet_tags.indices[
 ]
 
 interface_facets = facet_tags.indices[
-    facet_tags.values == Interface.melt_crystal
+    facet_tags.values == Interface.melt_crystal.value
 ]
 
 #---------------------------------------------------------------------------------------------------#
@@ -303,9 +309,10 @@ dofs_interface = dolfinx.fem.locate_dofs_topological(
 
 value_T = dolfinx.Function(Space_T)
 with value_T.vector.localForm() as loc:
-    values = loc.getArray()
-    values[dofs_interface] = T_melt * np.ones(shape=(len(dofs_interface),))
-    loc.setArray(values)
+    # values = loc.getArray()
+    # values[dofs_interface] = T_melt * np.ones(shape=(len(dofs_interface),))
+    # loc.setArray(values)
+    loc.set(T_melt)
 bcs_T.append(dolfinx.DirichletBC(value_T, dofs_interface))
 
 #---------------------------------------------------------------------------------------------------#
@@ -314,18 +321,18 @@ heat_problem = Heat(Space_T)
 
 #---------------------------------------------------------------------------------------------------#
 # Not sure if needed
-interface_facets = facet_tags.indices[
-    facet_tags.values == Interface.melt_crystal
-]
+# interface_facets = facet_tags.indices[
+#     facet_tags.values == Interface.melt_crystal.value
+# ]
 
-dofs_interface = dolfinx.fem.locate_dofs_topological(
-    Space_T, 1, interface_facets
-)
+# dofs_interface = dolfinx.fem.locate_dofs_topological(
+#     Space_T, 1, interface_facets
+# )
 
-with heat_problem.solution.vector.localForm() as loc:
-    values = loc.getArray()
-    values[dofs_interface] = T_melt * np.ones(shape=(len(dofs_interface),))
-    loc.setArray(values)
+# with heat_problem.solution.vector.localForm() as loc:
+#     values = loc.getArray()
+#     values[dofs_interface] = T_melt * np.ones(shape=(len(dofs_interface),))
+#     loc.setArray(values)
 
 #---------------------------------------------------------------------------------------------------#
 
@@ -338,19 +345,25 @@ with heat_problem.solution.vector.localForm() as loc:
 # _ = heat_problem.solve()
 
 initial_solution = load_function(Space_T_0, "steadystate_solution.txt")
-initial_solution = project(initial_solution, Space_T)
+T_old = project(initial_solution, Space_T)
 
-T_old = dolfinx.Function(Space_T)
-with initial_solution.vector.localForm() as loc_T_0, heat_problem.solution.vector.localForm() as loc_T,  T_old.vector.localForm() as loc_T_old:
-    loc_T_0.copy(loc_T)
-    loc_T_0.copy(loc_T_old)
+with T_old.vector.localForm() as loc:
+    values = loc.getArray()
+    values[dofs_interface] = T_melt * np.ones(shape=(len(dofs_interface),))
+    values[dofs_T] = T_amb * np.ones(shape=(len(dofs_T),))
+    loc.setArray(values)
+
+heat_problem.solution.interpolate(T_old)
+# with initial_solution.vector.localForm() as loc_T_0, heat_problem.solution.vector.localForm() as loc_T,  T_old.vector.localForm() as loc_T_old:
+#     loc_T_0.copy(loc_T)
+#     loc_T_0.copy(loc_T_old)
 
 
-one_step_theta_timestepper = OneStepTheta(heat_problem, 0.5+Dt)
+# one_step_theta_timestepper = OneStepTheta(heat_problem, 0.5+Dt)
 
-heat_form = one_step_theta_timestepper.step(T_old, rho * capacity, 0.0, Dt, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
+# heat_form = one_step_theta_timestepper.step(T_old, rho * capacity, 0.0, Dt, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
 
-heat_problem.assemble(heat_form, bcs_T)
+# heat_problem.assemble(heat_form, bcs_T)
 
 #####################################################################################################
 #                                                                                                   #
@@ -376,95 +389,6 @@ latent_heat_value = 5.96e4 * mat_data["melt"]["Density"] # J/m^3
 # #---------------------------------------------------------------------------------------------------#
 
 stefan_problem = Stefan(Space_V)
-stefan_a, stefan_L = stefan_problem.setup(stefan_problem.solution, dV, dA, dI, kappa, latent_heat_value, heat_problem.solution)
-stefan_problem.assemble(stefan_a, stefan_L, bcs_V, dofs_melt_crystal_interface)
-_ , normal_velocity_values = stefan_problem.solve(dofs_melt_crystal_interface)
-
-# #---------------------------------------------------------------------------------------------------#
-
-n = interface_normal(Space_V, Interface.melt_crystal, facet_tags)
-normal_velocity_vector = np.repeat(normal_velocity_values.reshape(-1,1), n.shape[1], axis=1) * n 
-
-#####################################################################################################
-#                                                                                                   #
-#                                   ASSEMBLE MESH MOVEMENT                                          #
-#                                                                                                   #
-#####################################################################################################
-
-sourrounding_facets = facet_tags.indices[
-        facet_tags.values == Boundary.surrounding.value
-    ]
-
-symmetry_axis_facets = facet_tags.indices[
-        facet_tags.values == Boundary.symmetry_axis.value
-    ]
-
-crystal_surface_facets = facet_tags.indices[
-        facet_tags.values == Surface.crystal.value
-    ]
-
-crucible_surface_facets = facet_tags.indices[
-        facet_tags.values == Surface.crucible.value
-    ]
-
-melt_crystal_interface_facets = facet_tags.indices[
-        facet_tags.values == Interface.melt_crystal.value
-    ]
-
-#---------------------------------------------------------------------------------------------------#
-
-dofs_hom_dirichlet = dolfinx.fem.locate_dofs_topological(
-    Space_MM, 1, np.concatenate([sourrounding_facets, crucible_surface_facets, crystal_surface_facets]) # TODO: DoFs on crystal surface not quite right 
-)
-
-value_MM = dolfinx.Function(Space_MM)
-with value_MM.vector.localForm() as loc:
-    loc.set(0)
-bcs_MM = [dolfinx.DirichletBC(value_MM, dofs_hom_dirichlet)]
-
-#---------------------------------------------------------------------------------------------------#
-
-dofs_symmetry_axis = dolfinx.fem.locate_dofs_topological(
-    (Space_MM.sub(0), Space_MM.sub(0).collapse(),),
-    1,
-    symmetry_axis_facets,
-)
-
-value_MM = dolfinx.Function(Space_MM.sub(0).collapse()) # only BC on x-component
-with value_MM.vector.localForm() as loc:
-    loc.set(0)
-
-bcs_MM.append(dolfinx.DirichletBC(
-        value_MM, dofs_symmetry_axis, Space_MM.sub(0)
-    )
-)
-
-#---------------------------------------------------------------------------------------------------#
-# Calculate Displacement Vector on Interface as u = Dt * ((n * (v_pull + v_growth)) n)
-
-v_pull_vector = v_pull * np.repeat(np.array([0.0 , 1.0, 0.0]).reshape(3,1), normal_velocity_vector.shape[0] , axis=1).T
-
-velocity_vector = normal_velocity_vector + v_pull_vector
-
-normal_velocity_vector = normal_velocity(velocity_vector, n)
-
-beta = 10.0 # in degrees
-beta *= np.pi / 180
-
-displacement_vector = interface_displacement(normal_velocity_vector, v_pull_vector, Dt, beta, Space_V, Interface.melt_crystal, Surface.melt, facet_tags)
-#---------------------------------------------------------------------------------------------------#
-
-dofs_melt_crystal_interface = dolfinx.fem.locate_dofs_topological(
-    Space_MM, 1, melt_crystal_interface_facets 
-)
-
-displacement_function = dolfinx.Function(Space_MM, name="displacement_function")
-
-with displacement_function.vector.localForm() as loc:
-    values = loc.getArray()
-    values[2 * dofs_melt_crystal_interface] = displacement_vector[:,0]
-    values[2 * dofs_melt_crystal_interface + 1] = displacement_vector[:,1]
-    loc.setArray(values)
 
 #---------------------------------------------------------------------------------------------------#
 # Calculate the displacement caused by the change of the meniscus shape 
@@ -480,16 +404,46 @@ res_dir = "examples/results/"
 vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "result.pvd", "w")
 
 for step, t in enumerate(np.arange(0, t_end + Dt, Dt)):
-    fields = [heat_problem.solution, stefan_problem.solution, displacement_function]
+    diff = project(heat_problem.solution - T_old, Space_T, name="Diff")
+
+    #---------------------------------------------------------------------------------------------------#
+
+    stefan_a, stefan_L = stefan_problem.setup(stefan_problem.solution, dV, dA, dI, kappa, latent_heat_value, heat_problem.solution)
+    stefan_problem.assemble(stefan_a, stefan_L, bcs_V, dofs_melt_crystal_interface)
+    _ , normal_velocity_values = stefan_problem.solve(dofs_melt_crystal_interface)
+
+    #---------------------------------------------------------------------------------------------------#
+
+    n = interface_normal(Space_V, Interface.melt_crystal, facet_tags)
+    normal_velocity_vector = np.repeat(normal_velocity_values.reshape(-1,1), n.shape[1], axis=1) * n 
+
+    # Calculate Displacement Vector on Interface as u = Dt * ((n * (v_pull + v_growth)) n)
+    displacement_function = dolfinx.Function(Space_MM, name="displacement_function")
+
+    v_pull_vector = v_pull * np.repeat(np.array([0.0 , 1.0, 0.0]).reshape(3,1), normal_velocity_vector.shape[0] , axis=1).T
+
+    velocity_vector = normal_velocity_vector + v_pull_vector
+
+    normal_velocity_vector = normal_velocity(velocity_vector, n)
+    
+    interface_displacement(displacement_function, normal_velocity_vector, v_pull_vector, Dt, beta, Space_V, Interface.melt_crystal, Surface.melt, facet_tags)
+
+    displacement = mesh_displacement(displacement_function, Volume, Boundary, Surface, Interface, cell_tags, facet_tags)
+    mesh_move(mesh, displacement)
+
+    fields = [heat_problem.solution, stefan_problem.solution, displacement_function, diff]
     output_fields = [sol._cpp_object for sol in fields]
     vtk.write_function(output_fields, t)
 
+    # heat_form = one_step_theta_timestepper.step(T_old, rho * capacity, 0.0, Dt, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
+    heat_form = heat_problem.setup(heat_problem.solution, T_old, Dt, dV, dA, dI, rho, capacity, kappa, omega, varsigma, h,  T_amb, A, f_heat)
     heat_problem.assemble(heat_form, bcs_T)
     heat_problem.solve()
     # mesh_movement_problem.solve()
 
-    with heat_problem.solution.vector.localForm() as loc_T, T_old.vector.localForm() as loc_T_old:
-        loc_T.copy(loc_T_old)
+    T_old.interpolate(heat_problem.solution)
+    # with heat_problem.solution.vector.localForm() as loc_T, T_old.vector.localForm() as loc_T_old:
+    #     loc_T.copy(loc_T_old)
 
     if MPI.COMM_WORLD.rank == 0:
         elapsed = int(time() - start_time)

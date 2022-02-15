@@ -30,13 +30,16 @@ class Heat:
     def test_function(self):
         return self._test_function
     
-    def setup(self, T, dV, dA, dI, rho, kappa, omega, varsigma, h, T_amb, A, f):
+    def setup(self, T, T_old, Dt, dV, dA, dI, rho, capacity, kappa, omega, varsigma, h, T_amb, A, f):
         
-        Form_T = (
+        Form_T = 1/Dt * ufl.inner(capacity * rho * (T-T_old), self._test_function) * 2*pi*self._r*  dV
+        Form_T += (
             kappa * ufl.inner(ufl.grad(T), ufl.grad(self._test_function))
             - rho * ufl.inner(f, self._test_function)
             - self._heat_scaling * varsigma / 2 * omega ** 2 * ufl.inner(ufl.inner(A, A), self._test_function)
-        ) * 2*pi*self._r*  dV + h * ufl.inner((T("-") - T_amb), self._test_function("-")) * 2*pi*self._r* (
+        ) * 2*pi*self._r*  dV
+        
+        Form_T += h * ufl.inner((T("-") - T_amb), self._test_function("-")) * 2*pi*self._r* (
             dI(Surface.crystal.value)
             + dI(Surface.melt.value)
             + dI(Surface.crucible.value)
@@ -59,7 +62,7 @@ class Heat:
             )
 
         # Weakly impose Dirichlet Boundary Conditions on melt-crystal Interface
-        Form_T += 1.0 / 1e-12 * ufl.inner(ufl.avg(T) - 505.08, ufl.avg(self.test_function)) * 2*pi*self._r* dI(Interface.melt_crystal.value)
+        # Form_T += 1.0 / 1e-12 * ufl.inner(ufl.avg(T) - 505.08, ufl.avg(self.test_function)) * 2*pi*self._r* dI(Interface.melt_crystal.value)
 
         return Form_T
 
