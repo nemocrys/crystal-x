@@ -174,7 +174,7 @@ beta *= np.pi / 180
 
 # Ambient Temperature
 T_amb = 293.15 # K
-T_melt = 505.08 # K
+T_melt = material_data["tin-solid"]["Melting Point"] # 505.08 K
 
 # Heat source
 f_heat = 0
@@ -184,7 +184,7 @@ h = 5  # W / (m^2 K)
 #---------------------------------------------------------------------------------------------------#
 
 Dt = 1e-2
-t_end = 200 * Dt
+t_end = 2 * Dt
 
 v_pull = 4  # mm/min
 v_pull *= 1.6666666e-5  # m/s
@@ -409,11 +409,28 @@ stefan_problem = Stefan(Space_V)
 res_dir = "examples/results/"
 vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "result.pvd", "w")
 
+#---------------------------------------------------------------------------------------------------#
 for step, t in enumerate(np.arange(0, t_end + Dt, Dt)):
-    # diff = project(heat_problem.solution - T_old, Space_T, name="Diff")
 
     #---------------------------------------------------------------------------------------------------#
+    if step!=0:
+        fields = [heat_problem.solution, em_problem.solution, stefan_problem.solution, displacement_function, displacement]
+        output_fields = [sol._cpp_object for sol in fields]
+        vtk.write_function(output_fields, t)
+    #---------------------------------------------------------------------------------------------------#
+    if step != 0:
+        mesh_move(mesh, displacement)
+    #---------------------------------------------------------------------------------------------------#
+    em_form = em_problem.setup(em_problem.solution, dV, dA, dI, mu_0, omega, varsigma, current_density)
+    em_problem.assemble(em_form, bcs_A)
+    em_problem.solve()
+    #---------------------------------------------------------------------------------------------------#
+    heat_form = heat_problem.setup(heat_problem.solution, T_old, Dt, dV, dA, dI, rho, capacity, kappa, omega, varsigma, h,  T_amb, em_problem.solution, f_heat)
+    heat_problem.assemble(heat_form, bcs_T)
+    heat_problem.solve()
 
+    T_old.interpolate(heat_problem.solution)
+    
     stefan_a, stefan_L = stefan_problem.setup(stefan_problem.solution, dV, dA, dI, kappa, latent_heat_value, heat_problem.solution)
     stefan_problem.assemble(stefan_a, stefan_L, bcs_V, dofs_melt_crystal_interface)
     _ , normal_velocity_values = stefan_problem.solve(dofs_melt_crystal_interface)
@@ -432,27 +449,11 @@ for step, t in enumerate(np.arange(0, t_end + Dt, Dt)):
 
     normal_velocity_vector = normal_velocity(velocity_vector, n)
     
-    interface_displacement(displacement_function, normal_velocity_vector, v_pull_vector, Dt, beta, Space_V, Interface.melt_crystal, Surface.melt, facet_tags)
+    interface_displacement(displacement_function, normal_velocity_vector, v_pull_vector, Dt, beta, Space_V, Interface.melt_crystal, Surface.meniscus, facet_tags)
+    meniscus_displacement(displacement_function, Surface.meniscus, facet_tags)
 
     displacement = mesh_displacement(displacement_function, Volume, Boundary, Surface, Interface, cell_tags, facet_tags)
-    mesh_move(mesh, displacement)
-
     #---------------------------------------------------------------------------------------------------#
-
-    fields = [heat_problem.solution, stefan_problem.solution, displacement_function]
-    output_fields = [sol._cpp_object for sol in fields]
-    vtk.write_function(output_fields, t)
-
-    # heat_form = one_step_theta_timestepper.step(T_old, rho * capacity, 0.0, Dt, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
-    heat_form = heat_problem.setup(heat_problem.solution, T_old, Dt, dV, dA, dI, rho, capacity, kappa, omega, varsigma, h,  T_amb, A, f_heat)
-    heat_problem.assemble(heat_form, bcs_T)
-    heat_problem.solve()
-    # mesh_movement_problem.solve()
-
-    T_old.interpolate(heat_problem.solution)
-    # with heat_problem.solution.vector.localForm() as loc_T, T_old.vector.localForm() as loc_T_old:
-    #     loc_T.copy(loc_T_old)
-
     if MPI.COMM_WORLD.rank == 0:
         elapsed = int(time() - start_time)
         e_h, e_m, e_s = (
@@ -463,7 +464,7 @@ for step, t in enumerate(np.arange(0, t_end + Dt, Dt)):
         print(
             f"step {step}: time {t:.8f} s --- temperature solution in {e_h:.0f} h {e_m:.0f} min {e_s:.0f} s "
         )
-
+#---------------------------------------------------------------------------------------------------#
 vtk.close()
 
 

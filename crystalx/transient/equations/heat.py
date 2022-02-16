@@ -20,7 +20,7 @@ class Heat:
         # radial coordinate
         self._r = ufl.SpatialCoordinate(V.mesh)[0]
 
-        self._heat_scaling = 1.5794668892070594 # Value from Steady state
+        self._heat_scaling = 2.6568633175886314 # Value from Steady state
 
     @property
     def solution(self):
@@ -41,7 +41,8 @@ class Heat:
         
         Form_T += h * ufl.inner((T("-") - T_amb), self._test_function("-")) * 2*pi*self._r* (
             dI(Surface.crystal.value)
-            + dI(Surface.melt.value)
+            + dI(Surface.meniscus.value)
+            + dI(Surface.melt_flat.value)
             + dI(Surface.crucible.value)
         )
 
@@ -51,7 +52,7 @@ class Heat:
 
 
         sigma_sb = 5.670374419e-8
-        for vol, surf in zip([Volume.axis_top, Volume.seed ,Volume.crystal, Volume.melt, Volume.crucible, Volume.insulation, Volume.adapter, Volume.axis_bottom, Volume.inductor], [Surface.axis_top, Surface.seed, Surface.crystal, Surface.melt, Surface.crucible, Surface.insulation, Surface.adapter, Surface.axis_bottom, Surface.inductor]):
+        for vol, surf in zip([Volume.axis_top, Volume.seed ,Volume.crystal, Volume.melt, Volume.melt, Volume.crucible, Volume.insulation, Volume.adapter, Volume.axis_bottom, Volume.inductor], [Surface.axis_top, Surface.seed, Surface.crystal, Surface.meniscus,Surface.melt_flat, Surface.crucible, Surface.insulation, Surface.adapter, Surface.axis_bottom, Surface.inductor]):
             eps = mat_data[vol.material]["Emissivity"]
             Form_T += (
                 sigma_sb

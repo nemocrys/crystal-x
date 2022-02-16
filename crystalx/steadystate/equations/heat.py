@@ -38,9 +38,9 @@ class Heat:
             - self._heat_scaling * varsigma / 2 * omega ** 2 * ufl.inner(ufl.inner(A, A), self._test_function)
         ) * 2*pi*self._r*  dV + h * ufl.inner((T("-") - T_amb), self._test_function("-")) * 2*pi*self._r* (
             dI(Surface.crystal.value)
-            + dI(Surface.melt.value)
+            + dI(Surface.meniscus.value)
+            + dI(Surface.melt_flat.value)
             + dI(Surface.crucible.value)
-            + dI(Surface.seed.value)
         )
 
         # material parameters for radiation
@@ -49,7 +49,7 @@ class Heat:
 
 
         sigma_sb = 5.670374419e-8
-        for vol, surf in zip([Volume.axis_top, Volume.seed ,Volume.crystal, Volume.melt, Volume.crucible, Volume.insulation, Volume.adapter, Volume.axis_bottom, Volume.inductor], [Surface.axis_top, Surface.seed, Surface.crystal, Surface.melt, Surface.crucible, Surface.insulation, Surface.adapter, Surface.axis_bottom, Surface.inductor]):
+        for vol, surf in zip([Volume.axis_top, Volume.seed ,Volume.crystal, Volume.melt, Volume.melt, Volume.crucible, Volume.insulation, Volume.adapter, Volume.axis_bottom, Volume.inductor], [Surface.axis_top, Surface.seed, Surface.crystal, Surface.meniscus,Surface.melt_flat, Surface.crucible, Surface.insulation, Surface.adapter, Surface.axis_bottom, Surface.inductor]):
             eps = mat_data[vol.material]["Emissivity"]
             Form_T += (
                 sigma_sb

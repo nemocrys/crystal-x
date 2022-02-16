@@ -1,4 +1,5 @@
 import yaml
+import numpy as np
 from .czochralski import crucible, surrounding
 from pyelmer.gmsh import *
 
@@ -45,23 +46,24 @@ class Interface(Enum):
 
 # interface between solid/gas or liquid/gas volumes (dim = 1)
 class Surface(Enum):
-    axis_top = 15
-    seed = 16
-    crystal = 17
-    melt = 18
-    crucible = 19
+    crystal = 15
+    meniscus = 16
+    melt_flat = 17
+    crucible = 18
+    seed = 19
     insulation = 20
     adapter = 21
     axis_bottom = 22
-    inductor = 23
+    axis_top = 23
+    inductor = 24
 
 # boundaries of the domain (dim = 1)
 class Boundary(Enum):
-    symmetry_axis = 24
-    surrounding = 25
-    axis_bottom = 26
-    axis_top = 27
-    inductor_inside = 28
+    symmetry_axis = 25
+    surrounding = 26
+    axis_bottom = 27
+    axis_top = 28
+    inductor_inside = 29
 
 # create geometry
 def create_geometry():
@@ -109,7 +111,12 @@ def create_geometry():
 
     # surfaces for radiation / convective cooling
     surf_crystal = Shape(model, 1, "surf_crystal", Crystal.get_interface(Surrounding))
-    surf_melt = Shape(model, 1, "surf_melt", Melt.get_interface(Surrounding))
+    
+    melt_surf_ids = Melt.get_interface(Surrounding)
+    x_min_of_surf_melt = [factory.get_bounding_box(1, melt_surf_ids[0])[0], factory.get_bounding_box(1, melt_surf_ids[1])[0]]
+    surf_meniscus = Shape(model, 1, "surf_meniscus", [melt_surf_ids[np.argmin(x_min_of_surf_melt)]])
+    surf_melt_flat = Shape(model, 1, "surf_melt_flat", [melt_surf_ids[np.argmax(x_min_of_surf_melt)]])
+    
     surf_crucible = Shape(
         model, 1, "surf_crucible", Crucible.get_interface(Surrounding)
     )
@@ -129,7 +136,7 @@ def create_geometry():
         model,
         1,
         "bnd_surrounding",
-        [x for x in Surrounding.boundaries if x not in model.symmetry_axis + surf_axtop.geo_ids + surf_seed.geo_ids + surf_crystal.geo_ids + surf_melt.geo_ids + surf_crucible.geo_ids + surf_ins.geo_ids + surf_adp.geo_ids + surf_axbt.geo_ids + surf_inductor.geo_ids]
+        [x for x in Surrounding.boundaries if x not in model.symmetry_axis + surf_axtop.geo_ids + surf_seed.geo_ids + surf_crystal.geo_ids + surf_meniscus.geo_ids + surf_melt_flat.geo_ids + surf_crucible.geo_ids + surf_ins.geo_ids + surf_adp.geo_ids + surf_axbt.geo_ids + surf_inductor.geo_ids]
     )
 
     bnd_axbt = Shape(model, 1, "bnd_axbt", [Ax_bt.bottom_boundary])
@@ -150,7 +157,8 @@ def create_geometry():
     MeshControlExponential(
         model, if_melt_crystal, Crystal.params.r / 30, exp=1.6, fact=3
     )
-    MeshControlExponential(model, surf_melt, Melt.mesh_size / 5, exp=1.6, fact=3)
+    MeshControlExponential(model, surf_meniscus, Melt.mesh_size / 5, exp=1.6, fact=3)
+    MeshControlExponential(model, surf_melt_flat, Melt.mesh_size / 5, exp=1.6, fact=3)
     MeshControlExponential(model, if_crucible_melt, Melt.mesh_size / 5, exp=1.6, fact=3)
     MeshControlExponential(
         model, surf_crucible, Crucible.mesh_size / 3, exp=1.6, fact=3

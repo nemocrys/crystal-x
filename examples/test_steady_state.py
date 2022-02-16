@@ -154,12 +154,14 @@ Space_MM = dolfinx.FunctionSpace(mesh, vector_element(degree=1)) # MM
 #                                       PARAMETERS                                                  #
 #                                                                                                   #
 #####################################################################################################
+with open("examples/materials/materials.yml") as f:
+    material_data = yaml.safe_load(f)
 
 # Ambient Temperature
 T_amb = 293.15#300.0  # K
 
 # Melting Temperature
-T_melt = 505.08 #K
+T_melt = material_data["tin-solid"]["Melting Point"] # 505.08K
 
 # Heat source
 f_heat = 0
@@ -314,7 +316,6 @@ for iteration in range(10):
     mesh_move(mesh, displacement_function)
 
 vtk.close()
-
 
 
 # #####################################################################################################

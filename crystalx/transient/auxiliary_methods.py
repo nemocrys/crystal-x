@@ -170,7 +170,8 @@ def mesh_displacement(displacement_function, Volume, Boundary, Surface, Interfac
     melt = Volume.melt
     crystal = Volume.crystal
     interface = Interface.melt_crystal
-    
+    meniscus = Surface.meniscus
+
     # Setup mesh movement problem
     mesh = displacement_function.function_space.mesh
     
@@ -215,11 +216,19 @@ def mesh_displacement(displacement_function, Volume, Boundary, Surface, Interfac
         facet_tags.values == interface.value
     ]
 
+    meniscus_facets = facet_tags.indices[
+        facet_tags.values == meniscus.value
+    ]
+
     dofs_interface = dolfinx.fem.locate_dofs_topological(
         displacement_function.function_space, 1, interface_facets
     )
 
-    bcs_MM = [dolfinx.DirichletBC(displacement_function, dofs_interface)]
+    dofs_meniscus = dolfinx.fem.locate_dofs_topological(
+        displacement_function.function_space, 1, meniscus_facets
+    )
+
+    bcs_MM = [dolfinx.DirichletBC(displacement_function, np.concatenate([dofs_interface, dofs_meniscus]))]
 
     #---------------------------------------------------------------------------------------------------#
     # set other boundary conditions
@@ -232,16 +241,8 @@ def mesh_displacement(displacement_function, Volume, Boundary, Surface, Interfac
             facet_tags.values == Boundary.symmetry_axis.value
         ]
 
-    crystal_surface_facets = facet_tags.indices[
-            facet_tags.values == Surface.crystal.value
-        ]
-
     crucible_surface_facets = facet_tags.indices[
             facet_tags.values == Surface.crucible.value
-        ]
-
-    melt_surface_facets = facet_tags.indices[
-            facet_tags.values == Surface.melt.value
         ]
 
     #---------------------------------------------------------------------------------------------------#
@@ -412,19 +413,19 @@ def meniscus_shape(z):
 
     return x
 
-def meniscus_displacement(displacement_function, function_space, meniscus, facet_tags):
+def meniscus_displacement(displacement_function, meniscus, facet_tags):
     
     meniscus_facets = facet_tags.indices[
         facet_tags.values == meniscus.value
     ]
 
     dofs_meniscus = dolfinx.fem.locate_dofs_topological(
-        function_space, 1, meniscus_facets
+        displacement_function.function_space, 1, meniscus_facets
     )
 
     #---------------------------------------------------------------------------------------------------#
     
-    coordinates_meniscus = function_space.tabulate_dof_coordinates()[dofs_meniscus]
+    coordinates_meniscus = displacement_function.function_space.tabulate_dof_coordinates()[dofs_meniscus]
 
     # permutation in decresing order (y-Coordinate)
     permutation_meniscus = np.flipud(np.argsort(coordinates_meniscus[:, 1]))
@@ -454,15 +455,11 @@ def meniscus_displacement(displacement_function, function_space, meniscus, facet
     displacement_meniscus[:, 0] += meniscus_x_coordinates
     displacement_meniscus[:, 1] += meniscus_y_coordinates
 
-    # mark triple point and crucible point
-    displacement_meniscus[0, 2] = np.inf
-    displacement_meniscus [-1,2] = np.inf
-
     displacement_meniscus = displacement_meniscus[inverse_permutation]
 
     # remove the displacement on triple point and meniscus
     cleaned_dofs_meniscus = dofs_meniscus[np.logical_and(dofs_meniscus != dof_triple_point, dofs_meniscus != dof_crucible)]
-    displacement_meniscus = displacement_meniscus[displacement_meniscus[:,2] != np.inf]
+    displacement_meniscus = displacement_meniscus[np.logical_and(dofs_meniscus != dof_triple_point, dofs_meniscus != dof_crucible)]
     
     # write meniscus displacement in displacement function
     with displacement_function.vector.localForm() as loc:

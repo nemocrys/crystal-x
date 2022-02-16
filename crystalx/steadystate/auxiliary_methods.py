@@ -180,12 +180,15 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
             facet_tags.values == Surface.crucible.value
         ]
 
-    melt_surface_facets = facet_tags.indices[
-            facet_tags.values == Surface.melt.value
+    meniscus_surface_facets = facet_tags.indices[
+            facet_tags.values == Surface.meniscus.value
         ]
 
+    melt_flat_surface_facets = facet_tags.indices[
+            facet_tags.values == Surface.melt_flat.value
+        ]
     #---------------------------------------------------------------------------------------------------#
-    dirichlet_facets = np.concatenate([sourrounding_facets, crucible_surface_facets, crystal_surface_facets, melt_surface_facets])
+    dirichlet_facets = np.concatenate([sourrounding_facets, crucible_surface_facets, crystal_surface_facets, meniscus_surface_facets, melt_flat_surface_facets])
 
     dofs_hom_dirichlet = dolfinx.fem.locate_dofs_topological(
         Space_MM, 1, dirichlet_facets
