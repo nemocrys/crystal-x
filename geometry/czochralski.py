@@ -75,7 +75,7 @@ def melt(
     else:  # with meniscus, following Landau87
         if rho == 0:  # read material data from material file
             with open("examples/materials/materials.yml") as f:
-                data = yaml.safe_load(f)["melt"]
+                data = yaml.safe_load(f)["tin-liquid"]
             rho = data["Density"]
             gamma = data["Surface Tension"]
             beta = data["Beta"] / 360 * 2 * np.pi  # theta in Landau87

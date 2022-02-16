@@ -218,17 +218,17 @@ with kappa.vector.localForm() as loc_kappa, varsigma.vector.localForm() as loc_v
         cells = cell_tags.indices[cell_tags.values == vol.value]
         num_cells = len(cells)
         loc_kappa.setValues(
-            cells, np.full(num_cells, material_data[vol.name]["Heat Conductivity"])
+            cells, np.full(num_cells, material_data[vol.material]["Heat Conductivity"])
         )
         loc_varsigma.setValues(
-            cells, np.full(num_cells, material_data[vol.name]["Electric Conductivity"])
+            cells, np.full(num_cells, material_data[vol.material]["Electric Conductivity"])
         )
         loc_varepsilon.setValues(
-            cells, np.full(num_cells, material_data[vol.name]["Emissivity"])
+            cells, np.full(num_cells, material_data[vol.material]["Emissivity"])
         )
-        loc_rho.setValues(cells, np.full(num_cells, material_data[vol.name]["Density"]))
+        loc_rho.setValues(cells, np.full(num_cells, material_data[vol.material]["Density"]))
         loc_capacity.setValues(
-            cells, np.full(num_cells, material_data[vol.name]["Heat Capacity"])
+            cells, np.full(num_cells, material_data[vol.material]["Heat Capacity"])
         )
 
 #####################################################################################################
@@ -261,18 +261,22 @@ sourrounding_facets = facet_tags.indices[
         facet_tags.values == Boundary.surrounding.value
     ]
 
-insulation_bottom_facets = facet_tags.indices[
-    facet_tags.values == Surface.insulation_bottom.value
-]
+axis_bottom_facets = facet_tags.indices[
+        facet_tags.values == Boundary.axis_bottom.value
+    ]
+
+axis_top_facets = facet_tags.indices[
+        facet_tags.values == Boundary.axis_top.value
+    ]
 
 coil_inside_facets = facet_tags.indices[
-    facet_tags.values == Surface.inductor_inside.value
+    facet_tags.values == Boundary.inductor_inside.value
 ]
 
 #---------------------------------------------------------------------------------------------------#
 
 dofs_T = dolfinx.fem.locate_dofs_topological(
-    Space_T, 1, np.concatenate([coil_inside_facets, sourrounding_facets, insulation_bottom_facets])
+    Space_T, 1, np.concatenate([axis_bottom_facets, axis_top_facets, coil_inside_facets, sourrounding_facets])
 )
 
 value_T = dolfinx.Function(Space_T)
@@ -308,7 +312,6 @@ for iteration in range(10):
     output_fields = [sol._cpp_object for sol in fields]
     vtk.write_function(output_fields, iteration)
     mesh_move(mesh, displacement_function)
-
 
 vtk.close()
 

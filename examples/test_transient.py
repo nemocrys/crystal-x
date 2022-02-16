@@ -164,7 +164,10 @@ Space_MM = dolfinx.FunctionSpace(mesh, vector_element(degree=1)) # MM
 #####################################################################################################
 
 #Specific growing angle
-beta = 10.0 # in degrees
+with open("examples/materials/materials.yml") as f:
+    material_data = yaml.safe_load(f)
+
+beta = material_data["tin-liquid"]["Beta"] # in degrees
 beta *= np.pi / 180
 
 #---------------------------------------------------------------------------------------------------#
@@ -181,7 +184,7 @@ h = 5  # W / (m^2 K)
 #---------------------------------------------------------------------------------------------------#
 
 Dt = 1e-2
-t_end = 1000 * Dt
+t_end = 200 * Dt
 
 v_pull = 4  # mm/min
 v_pull *= 1.6666666e-5  # m/s
@@ -233,17 +236,17 @@ with kappa.vector.localForm() as loc_kappa, varsigma.vector.localForm() as loc_v
         cells = cell_tags.indices[cell_tags.values == vol.value]
         num_cells = len(cells)
         loc_kappa.setValues(
-            cells, np.full(num_cells, material_data[vol.name]["Heat Conductivity"])
+            cells, np.full(num_cells, material_data[vol.material]["Heat Conductivity"])
         )
         loc_varsigma.setValues(
-            cells, np.full(num_cells, material_data[vol.name]["Electric Conductivity"])
+            cells, np.full(num_cells, material_data[vol.material]["Electric Conductivity"])
         )
         loc_varepsilon.setValues(
-            cells, np.full(num_cells, material_data[vol.name]["Emissivity"])
+            cells, np.full(num_cells, material_data[vol.material]["Emissivity"])
         )
-        loc_rho.setValues(cells, np.full(num_cells, material_data[vol.name]["Density"]))
+        loc_rho.setValues(cells, np.full(num_cells, material_data[vol.material]["Density"]))
         loc_capacity.setValues(
-            cells, np.full(num_cells, material_data[vol.name]["Heat Capacity"])
+            cells, np.full(num_cells, material_data[vol.material]["Heat Capacity"])
         )
 
 #####################################################################################################
@@ -276,23 +279,22 @@ sourrounding_facets = facet_tags.indices[
         facet_tags.values == Boundary.surrounding.value
     ]
 
-insulation_bottom_facets = facet_tags.indices[
-    facet_tags.values == Surface.insulation_bottom.value
-]
+axis_bottom_facets = facet_tags.indices[
+        facet_tags.values == Boundary.axis_bottom.value
+    ]
+
+axis_top_facets = facet_tags.indices[
+        facet_tags.values == Boundary.axis_top.value
+    ]
 
 coil_inside_facets = facet_tags.indices[
-    facet_tags.values == Surface.inductor_inside.value
-]
-
-interface_facets = facet_tags.indices[
-    facet_tags.values == Interface.melt_crystal.value
+    facet_tags.values == Boundary.inductor_inside.value
 ]
 
 #---------------------------------------------------------------------------------------------------#
-# Set ambient temperature on boundaries
 
 dofs_T = dolfinx.fem.locate_dofs_topological(
-    Space_T, 1, np.concatenate([coil_inside_facets, sourrounding_facets, insulation_bottom_facets])
+    Space_T, 1, np.concatenate([axis_bottom_facets, axis_top_facets, coil_inside_facets, sourrounding_facets])
 )
 
 value_T = dolfinx.Function(Space_T)
@@ -302,6 +304,10 @@ bcs_T = [dolfinx.DirichletBC(value_T, dofs_T)]
 
 #---------------------------------------------------------------------------------------------------#
 # Set melting temperature on crystal melt interface 
+
+interface_facets = facet_tags.indices[
+    facet_tags.values == Interface.melt_crystal.value
+]
 
 dofs_interface = dolfinx.fem.locate_dofs_topological(
     Space_T, 1, interface_facets
@@ -384,7 +390,7 @@ bcs_V = []
 with open("examples/materials/materials.yml") as f:
     mat_data = yaml.safe_load(f)
 
-latent_heat_value = 5.96e4 * mat_data["melt"]["Density"] # J/m^3
+latent_heat_value = mat_data["tin-solid"]["Latent Heat"] * mat_data["tin-liquid"]["Density"] # J/m^3
 
 # #---------------------------------------------------------------------------------------------------#
 
@@ -404,7 +410,7 @@ res_dir = "examples/results/"
 vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "result.pvd", "w")
 
 for step, t in enumerate(np.arange(0, t_end + Dt, Dt)):
-    diff = project(heat_problem.solution - T_old, Space_T, name="Diff")
+    # diff = project(heat_problem.solution - T_old, Space_T, name="Diff")
 
     #---------------------------------------------------------------------------------------------------#
 
@@ -431,7 +437,9 @@ for step, t in enumerate(np.arange(0, t_end + Dt, Dt)):
     displacement = mesh_displacement(displacement_function, Volume, Boundary, Surface, Interface, cell_tags, facet_tags)
     mesh_move(mesh, displacement)
 
-    fields = [heat_problem.solution, stefan_problem.solution, displacement_function, diff]
+    #---------------------------------------------------------------------------------------------------#
+
+    fields = [heat_problem.solution, stefan_problem.solution, displacement_function]
     output_fields = [sol._cpp_object for sol in fields]
     vtk.write_function(output_fields, t)
 

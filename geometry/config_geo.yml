@@ -1,11 +1,29 @@
 # This was copied from another project
 # Base configuration of Test-CZ geometry
+axis_bt:
+  r_in: 0.0075  # measured
+  r_out: 0.02  # measured
+  h: 0.029 # variable
+  T_init: 323.15
+  material: steel-1.4541
+axis_top:
+  r: 0.01  # measured
+  T_init: 303.15
+  material: steel-1.4541
 crucible:
   h: 0.05  # drawing
   r_in: 0.05  # drawing
   r_out: 0.06  # drawing
   t_bt: 0.01  # drawing
   T_init: 520
+  material: graphite-CZ3R6300
+crucible_adapter:
+  r_in_top: 0.01  # drawing
+  r_in_bt: 0.02  # drawing
+  r_out: 0.06  # drawing
+  h_top: 0.0045  # drawing
+  h_bt: 0.015  # drawing
+  T_init: 313.15
   material: graphite-CZ3R6300
 crystal:
   l: 0.1  # variable
@@ -35,7 +53,7 @@ seed:
   l: 0.04  # estimated
   T_init: 420
   material: tin-solid
-surrounding:
-  X0: [0, -0.15]
-  r: 0.2
-  h: 0.45
+surrounding:  # vessel inner dimensions
+  X0: [0, -0.0685]
+  r: 0.1315
+  h: 0.383

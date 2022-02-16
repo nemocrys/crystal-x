@@ -40,6 +40,7 @@ class Heat:
             dI(Surface.crystal.value)
             + dI(Surface.melt.value)
             + dI(Surface.crucible.value)
+            + dI(Surface.seed.value)
         )
 
         # material parameters for radiation
@@ -48,8 +49,8 @@ class Heat:
 
 
         sigma_sb = 5.670374419e-8
-        for vol, surf in zip([Volume.crystal, Volume.melt, Volume.crucible, Volume.insulation], [Surface.crystal, Surface.melt, Surface.crucible, Surface.insulation]):
-            eps = mat_data[vol.name]["Emissivity"]
+        for vol, surf in zip([Volume.axis_top, Volume.seed ,Volume.crystal, Volume.melt, Volume.crucible, Volume.insulation, Volume.adapter, Volume.axis_bottom, Volume.inductor], [Surface.axis_top, Surface.seed, Surface.crystal, Surface.melt, Surface.crucible, Surface.insulation, Surface.adapter, Surface.axis_bottom, Surface.inductor]):
+            eps = mat_data[vol.material]["Emissivity"]
             Form_T += (
                 sigma_sb
                 # * varepsilon("-")
@@ -61,7 +62,7 @@ class Heat:
         # TODO additional heat source for phase boundary
         v_pull = 4  # mm/min
         v_pull *= 1.6666666e-5  # m/s
-        latent_heat_value = 5.96e4 * mat_data["melt"]["Density"] * v_pull  # W/m^2 #TODO: WRONG !!! v_growth is needed and is not uniform!!!!
+        latent_heat_value = mat_data["tin-solid"]["Latent Heat"] * mat_data["tin-liquid"]["Density"] * v_pull  # W/m^2 #TODO: WRONG !!! v_growth is needed and is not uniform!!!!
     
         Form_T += (
             ufl.inner(-latent_heat_value, self._test_function("+")) 

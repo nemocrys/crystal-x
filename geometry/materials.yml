@@ -62,3 +62,14 @@ crystal:  # tin-solid
   Solid: 'Logical True'
   Melting Point: 505
   Latent Heat: 5.96e+4  # J / kg
+seed:  # tin-solid
+  Density: 7179.0
+  Electric Conductivity: 4.38e+6
+  Emissivity: 0.064
+  Heat Capacity: 244.0
+  Heat Conductivity: 60.0
+  Relative Permeability: 1
+  Relative Permittivity: 1
+  Solid: 'Logical True'
+  Melting Point: 505
+  Latent Heat: 5.96e+4  # J / kg

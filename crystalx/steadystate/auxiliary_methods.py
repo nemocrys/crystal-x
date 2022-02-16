@@ -297,7 +297,7 @@ def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volu
 
                 no_violation_values = values[~threshold_function_bool]
                 no_violation_coordinates = coordinates_of_dofs[~threshold_function_bool]
-                #change for higher polynomial degree
+                
                 for v_value, v_coord in zip(violation_values, violation_coordinates):
                     for n_v_value, n_v_coord  in zip(no_violation_values, no_violation_coordinates):
                         new_coord = n_v_coord + (threshold - n_v_value) / (v_value - n_v_value) * (
@@ -305,12 +305,14 @@ def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volu
                         )
                         interface_coords.append(new_coord)
     
-    interface_coords = np.unique(np.array(interface_coords), axis=0)
-    
+
+    interface_coords = np.array(interface_coords)
+    interface_coords = np.unique(interface_coords, axis=0)
+
     if not interface_coords.size == 0: 
         interface_coords = interface_coords[np.argsort(interface_coords[:, 0])]
     
-    if len(dofs_to_move_on_interface) > 0:
+    if (len(dofs_to_move_on_interface) and len(interface_coords)) > 0:
         old_interface_coordinates = coordinates[dofs_to_move_on_interface]
         min_x_coord_on_old_interface = old_interface_coordinates[:,0].min()
         max_x_coord_on_old_interface = old_interface_coordinates[:,0].max()
@@ -319,13 +321,12 @@ def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volu
         tdim = mesh.topology.dim
         num_cells = mesh.topology.index_map(tdim).size_local
         h_min = dolfinx.cpp.mesh.h(mesh, tdim, range(num_cells)).min()
-
-        if not np.isclose(min_x_coord_on_old_interface, interface_coords[0, 0], atol= h_min / 20):
+        if not np.isclose(min_x_coord_on_old_interface, interface_coords[0, 0], atol= h_min/2):
             interface_coords = interface_coords[1:,:]
 
-        if not np.isclose(max_x_coord_on_old_interface, interface_coords[-1, 0] , atol = h_min / 20):
+        if not np.isclose(max_x_coord_on_old_interface, interface_coords[-1, 0] , atol = h_min/2):
             interface_coords = interface_coords[:-1,:]
-    
+
     # if interface_coords != []:
     #     fig, ax = plt.subplots(1,1)
     #     ax.plot(interface_coords[:,0], interface_coords[:,1], '--go')
@@ -372,11 +373,11 @@ def project_graphs(old_coordinates, new_coordinates, volume):
         new_taus = calculate_graph_coordinates(new_coordinates)
 
         permutation = np.argsort(new_coordinates[:, 0])
-            
-        # permutate coordinates so that taus are in ascending order
-        permutated_coordinates = new_coordinates[permutation]
-        new_taus = new_taus[permutation]
         
+        # permutate coordinates so that taus are in ascending order
+        permutated_coordinates = new_coordinates#new_coordinates[permutation]
+        new_taus = new_taus#new_taus[permutation]
+
         # create piecewise linear function for the coordinate
         cond_list = [np.isclose(old_taus, 0.0)]
         for i in range(len(new_taus) - 2):
@@ -386,8 +387,9 @@ def project_graphs(old_coordinates, new_coordinates, volume):
                     old_taus <= new_taus[i + 1]
                 )
             )
-        cond_list.append(np.isclose(old_taus, 1.0))
         
+        cond_list.append(np.isclose(old_taus, 1.0))
+
         for j in range(dim):
             func_list = [permutated_coordinates[0, j] * np.ones(len(old_taus))]
 
@@ -399,16 +401,20 @@ def project_graphs(old_coordinates, new_coordinates, volume):
 
             func_list.append(permutated_coordinates[-1, j] * np.ones(len(old_taus)))
 
-            moved_coordinates.append(np.select(cond_list, func_list))
-            
+            moved_coordinates.append(np.select(cond_list, func_list, default=np.inf))
+
         moved_coordinates = np.array(moved_coordinates)
 
         moved_coordinates = moved_coordinates.T
 
+        # TODO: Not good, but I don#t find the problem why condlist fails.
+        if len([moved_coordinates[:,0] == np.inf]) > 0:
+            moved_coordinates[moved_coordinates[:,0] == np.inf] = old_coordinates[moved_coordinates[:,0] == np.inf]
+
         permutation = np.argsort(moved_coordinates[:, 0])
     
         # fig, ax = plt.subplots(1,1)
-        # ax.plot(moved_coordinates[permutation][:, 0], moved_coordinates[permutation][:, 1], '--bs')
+        # ax.plot(moved_coordinates[:, 0], moved_coordinates[:, 1], '--bs')
         # ax.plot(new_coordinates[:, 0], new_coordinates[:, 1], '--go')
         # ax.plot(old_coordinates[:,0],old_coordinates[:,1], '--r^')
         # # ax.set_aspect('equal', 'box')
