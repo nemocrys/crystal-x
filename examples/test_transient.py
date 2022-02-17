@@ -23,7 +23,8 @@ by M. Schröder, A. Enders-Seidlitz, B. E. Abali, K. Dadzis
 import numpy as np
 import yaml
 from time import time
-
+import matplotlib.pyplot as plt
+from matplotlib.offsetbox import AnchoredText
 #---------------------------------------------------------------------------------------------------#
 
 # DOLFINx Imports
@@ -56,7 +57,7 @@ from crystalx.transient.auxiliary_methods import interface_normal, normal_veloci
 #---------------------------------------------------------------------------------------------------#
 
 # crystal-x helpers
-from crystalx.helpers import load_function, load_mesh, project
+from crystalx.helpers import load_function, load_mesh, project, timeToStr, save_mesh, save_function
 
 #---------------------------------------------------------------------------------------------------#
 
@@ -184,7 +185,7 @@ h = 5  # W / (m^2 K)
 #---------------------------------------------------------------------------------------------------#
 
 Dt = 1e-2
-t_end = 2 * Dt
+t_end = 500 * Dt
 
 v_pull = 4  # mm/min
 v_pull *= 1.6666666e-5  # m/s
@@ -449,8 +450,20 @@ for step, t in enumerate(np.arange(0, t_end + Dt, Dt)):
 
     normal_velocity_vector = normal_velocity(velocity_vector, n)
     
-    interface_displacement(displacement_function, normal_velocity_vector, v_pull_vector, Dt, beta, Space_V, Interface.melt_crystal, Surface.meniscus, facet_tags)
-    meniscus_displacement(displacement_function, Surface.meniscus, facet_tags)
+    fig, ax = plt.subplots(1,1)
+
+    interface_displacement(displacement_function, normal_velocity_vector, v_pull_vector, Dt, beta, Space_V, Interface.melt_crystal, Surface.meniscus, facet_tags, ax, fig)
+    meniscus_displacement(displacement_function, Surface.meniscus, facet_tags, ax, fig)
+
+    at = AnchoredText(
+        f"time = {timeToStr(t)}", prop=dict(size=10), frameon=True, loc='upper right')
+    # at.patch.set_boxstyle("round,pad=0.,rounding_size=0.2")
+    ax.add_artist(at)
+
+    fig.savefig("interface.png")
+    fig.savefig(res_dir + f"img/interface_{str(step).zfill(6)}.png")
+
+
 
     displacement = mesh_displacement(displacement_function, Volume, Boundary, Surface, Interface, cell_tags, facet_tags)
     #---------------------------------------------------------------------------------------------------#
@@ -474,6 +487,12 @@ vtk.close()
 # #                                          OUTPUT                                                   #
 # #                                                                                                   #
 # #####################################################################################################
+
+# Save Mesh as initial geometry for transient
+save_mesh(mesh, cell_tags, facet_tags, MPI.COMM_WORLD, name="mesh_checkpoint")
+
+# Save steadystate solution as initial condition
+save_function(heat_problem.solution, name="solution_checkpoint")
 
 # res_dir = "examples/results/"
 

@@ -155,7 +155,7 @@ def create_geometry():
         MeshControlLinear(model, shape, shape.mesh_size, Surrounding.mesh_size)
     # exponential constraints for refinement
     MeshControlExponential(
-        model, if_melt_crystal, Crystal.params.r / 30, exp=1.6, fact=3
+        model, if_melt_crystal, Crystal.params.r / 50, exp=1.6, fact=3
     )
     MeshControlExponential(model, surf_meniscus, Melt.mesh_size / 5, exp=1.6, fact=3)
     MeshControlExponential(model, surf_melt_flat, Melt.mesh_size / 5, exp=1.6, fact=3)

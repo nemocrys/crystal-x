@@ -45,8 +45,8 @@ class Stefan:
         b = dolfinx.fem.create_vector(L)
         dolfinx.fem.assemble_vector(b, L)
 
-        self._A = A[interface_dofs, interface_dofs]
-        self._b = b[interface_dofs]
+        self._A = A[interface_dofs, interface_dofs].real
+        self._b = b[interface_dofs].real
     
     def solve(self, interface_dofs):
         

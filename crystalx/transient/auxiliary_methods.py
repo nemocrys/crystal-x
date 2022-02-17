@@ -286,8 +286,8 @@ def mesh_move(mesh, displacement):
     mesh.geometry.x[:, :2] += displacement.compute_point_values().real
     
 
-def interface_displacement(displacement_function, normal_velocity_vector, v_pull_vector, Dt, beta, function_space, interface, meniscus, facet_tags):
-    disp_vector = displacement_vector(normal_velocity_vector, v_pull_vector, Dt, beta, function_space, interface, meniscus, facet_tags)
+def interface_displacement(displacement_function, normal_velocity_vector, v_pull_vector, Dt, beta, function_space, interface, meniscus, facet_tags, ax, fig):
+    disp_vector = displacement_vector(normal_velocity_vector, v_pull_vector, Dt, beta, function_space, interface, meniscus, facet_tags, ax, fig)
 
     interface_facets = facet_tags.indices[
         facet_tags.values == interface.value
@@ -311,7 +311,7 @@ def normal_velocity(velocity_vector, normals):
     
     return normal_velocity_vector
 
-def displacement_vector(normal_velocity_vector, v_pull_vector, Dt, beta, function_space, interface, meniscus, facet_tags):
+def displacement_vector(normal_velocity_vector, v_pull_vector, Dt, beta, function_space, interface, meniscus, facet_tags, ax, fig):
     interface_facets = facet_tags.indices[
         facet_tags.values == interface.value
     ]
@@ -392,8 +392,14 @@ def displacement_vector(normal_velocity_vector, v_pull_vector, Dt, beta, functio
     # Compute moved interface by x^{n+1} = x^{n + 1/2} + Dt * v_p
 
     coordinates_moved_interface = coordinates_intermidiate_moved_interface + Dt * v_pull_vector
-    
+
+    coordinates_moved_interface = distribute_coordinates(coordinates_moved_interface, coordinates_interface)
+
     displacement_vector = coordinates_moved_interface - coordinates_interface
+
+    ax.plot(coordinates_moved_interface[:, 0].real, coordinates_moved_interface[:, 1].real, '-k.')
+    # ax.plot(coordinates_interface[:,0].real, coordinates_interface[:,1].real, '-r')
+
     return displacement_vector[inverse_permutation]
 
 def meniscus_shape(z):
@@ -413,7 +419,7 @@ def meniscus_shape(z):
 
     return x
 
-def meniscus_displacement(displacement_function, meniscus, facet_tags):
+def meniscus_displacement(displacement_function, meniscus, facet_tags, ax, fig):
     
     meniscus_facets = facet_tags.indices[
         facet_tags.values == meniscus.value
@@ -449,11 +455,23 @@ def meniscus_displacement(displacement_function, meniscus, facet_tags):
     meniscus_x_coordinates += coordinates_meniscus[0,0]
     meniscus_y_coordinates += coordinates_meniscus[-1,1]
 
-    #---------------------------------------------------------------------------------------------------#
+    coordinates_new_meniscus = np.zeros_like(coordinates_meniscus)
+    coordinates_new_meniscus[:,0] = meniscus_x_coordinates
+    coordinates_new_meniscus[:,1] = meniscus_y_coordinates
 
+    #---------------------------------------------------------------------------------------------------#
+    # Fix last point to old point
+    coordinates_new_meniscus[-1,:] = coordinates_meniscus[-1,:]
+    #---------------------------------------------------------------------------------------------------#
+    # TODO: Distribute coordinates along the graph (linear/exponential)
+    coordinates_new_meniscus = distribute_coordinates(coordinates_new_meniscus, coordinates_meniscus)
+
+    ax.plot(coordinates_new_meniscus[:, 0].real, coordinates_new_meniscus[:, 1].real, '-k.')
+    ax.plot(coordinates_new_meniscus[0, 0].real, coordinates_new_meniscus[0, 1].real, '-r.')
+    # ax.plot(coordinates_meniscus[:,0].real, coordinates_meniscus[:,1].real, '-r')
+    #---------------------------------------------------------------------------------------------------#
     displacement_meniscus = - coordinates_meniscus
-    displacement_meniscus[:, 0] += meniscus_x_coordinates
-    displacement_meniscus[:, 1] += meniscus_y_coordinates
+    displacement_meniscus += coordinates_new_meniscus
 
     displacement_meniscus = displacement_meniscus[inverse_permutation]
 
@@ -467,3 +485,78 @@ def meniscus_displacement(displacement_function, meniscus, facet_tags):
         values[2 * cleaned_dofs_meniscus] = displacement_meniscus[:,0]
         values[2 * cleaned_dofs_meniscus + 1] = displacement_meniscus[:,1]
         loc.setArray(values)
+
+
+def distribute_coordinates(new_coordinates, old_coordinates):
+    # coordinates must be ordered
+    moved_coordinates = []
+    
+    new_taus = calculate_graph_coordinates(new_coordinates)
+    old_taus = calculate_graph_coordinates(old_coordinates)
+    # print("new")
+    # print(new_taus)
+    # print("old")
+    # print(old_taus)
+    dim = old_coordinates.shape[1]
+        
+    # permutate coordinates so that taus are in ascending order
+    permutated_coordinates = new_coordinates#new_coordinates[permutation]
+    new_taus = new_taus#new_taus[permutation]
+
+    # create piecewise linear function for the coordinate
+    cond_list = [np.isclose(old_taus, 0.0)]
+    for i in range(len(new_taus) - 1):
+        cond_list.append(
+            np.logical_and(
+                new_taus[i] < old_taus,
+                old_taus <= new_taus[i+1]
+            )
+        )
+    
+    cond_list.append(np.isclose(old_taus, 1.0))
+    # for i in range(len(cond_list)):
+    #     print(f"Position {i+1}/{len(cond_list)}: {cond_list[i].any()}")
+    #     print(cond_list[i])
+
+    for j in range(dim):
+        func_list = [permutated_coordinates[0, j] * np.ones(len(old_taus))]
+
+        for i in range(len(new_taus) - 1):
+            func_list.append(
+                permutated_coordinates[i, j]
+                + (permutated_coordinates[i + 1, j] - permutated_coordinates[i, j]) * (old_taus - new_taus[i]) / (new_taus[i + 1] - new_taus[i])
+            )
+
+        func_list.append(permutated_coordinates[-1, j] * np.ones(len(old_taus)))
+
+        moved_coordinates.append(np.select(cond_list, func_list, default=np.inf))
+
+    moved_coordinates = np.array(moved_coordinates)
+
+    moved_coordinates = moved_coordinates.T
+
+    # TODO: Not good, but I don#t find the problem why condlist fails.
+    if len([moved_coordinates[:,0] == np.inf]) > 0:
+        moved_coordinates[moved_coordinates[:,0] == np.inf] = old_coordinates[moved_coordinates[:,0] == np.inf]
+
+    return moved_coordinates
+
+
+def calculate_graph_coordinates(coordinates):
+    """
+    Parameterize the graph with specific graph coordinates $\tau \in \left[0,1 \right]$
+    """   
+    
+    coordinates_of_dofs = coordinates.T
+
+    number_of_coordinates = coordinates_of_dofs.shape[1]
+    # calculate the normalized graph coordinate
+    tau = [0.0]
+    for i in range(number_of_coordinates - 1):
+        tau.append(tau[-1] + np.linalg.norm(coordinates_of_dofs[:, i] - coordinates_of_dofs[:, i+1]))
+
+    tau = np.array(tau)
+    if len(tau) > 1:
+        tau = tau / tau[-1]
+
+    return tau
