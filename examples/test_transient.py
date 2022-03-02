@@ -175,7 +175,7 @@ beta *= np.pi / 180
 
 # Ambient Temperature
 T_amb = 293.15 # K
-T_melt = material_data["tin-solid"]["Melting Point"] # 505.08 K
+T_melt = material_data["tin-solid"]["Melting Point"] # 505. K
 
 # Heat source
 f_heat = 0

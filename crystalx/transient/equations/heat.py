@@ -20,7 +20,7 @@ class Heat:
         # radial coordinate
         self._r = ufl.SpatialCoordinate(V.mesh)[0]
 
-        self._heat_scaling = 2.6567555396547373 # Value from Steady state
+        self._heat_scaling = 2.6552669163700564 #2.6567555396547373 # Value from Steady state
 
     @property
     def solution(self):

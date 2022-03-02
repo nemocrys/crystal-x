@@ -1,6 +1,8 @@
 """
 Run with dolfinx using Docker:
-docker run -it --mount type=bind,source="$(pwd)",target=/root dolfinx/dolfinx:latest
+docker run -it --mount type=bind,source="$(pwd)",target=/root nemocrys/dolfinx:2021.10.22
+docker start -i nemocrys
+docker exec -it nemocrys bash
 
 install additional stuff
 
@@ -161,7 +163,7 @@ with open("examples/materials/materials.yml") as f:
 T_amb = 293.15#300.0  # K
 
 # Melting Temperature
-T_melt = material_data["tin-solid"]["Melting Point"] # 505.08K
+T_melt = material_data["tin-solid"]["Melting Point"] # 505.K
 
 # Heat source
 f_heat = 0
@@ -251,7 +253,7 @@ bcs_A = []# [dolfinx.DirichletBC(value_A, dofs_A)]
 em_problem = Maxwell(Space_A)
 em_form = em_problem.setup(em_problem.solution, dV, dA, dI, mu_0, omega, varsigma, current_density)
 em_problem.assemble(em_form, bcs_A)
-A = em_problem.solve()
+em_problem.solve()
 
 #####################################################################################################
 #                                                                                                   #
@@ -300,17 +302,17 @@ heat_problem = Heat(Space_T)
 res_dir = "examples/results/"
 vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "steady_state_result.pvd", "w")
 
-for iteration in range(6):
+for iteration in range(4):
     print(f"Mesh update iteration {iteration}")
-    set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat, bcs_T, desired_temp=T_melt, interface=Interface.melt_crystal, facet_tags=facet_tags)
-    heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
+    set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, em_problem.solution, f_heat, bcs_T, desired_temp=T_melt, interface=Interface.melt_crystal, facet_tags=facet_tags)
+    heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, em_problem.solution, f_heat)
     heat_problem.assemble(heat_form, bcs_T)
 
     _ = heat_problem.solve()
 
     displacement_function = interface_displacement(heat_problem.solution, T_melt, Volume, Boundary, Surface, Interface, cell_tags, facet_tags)
 
-    fields = [heat_problem.solution, displacement_function]
+    fields = [heat_problem.solution, em_problem.solution,displacement_function]
     output_fields = [sol._cpp_object for sol in fields]
     vtk.write_function(output_fields, iteration)
     mesh_move(mesh, displacement_function)
