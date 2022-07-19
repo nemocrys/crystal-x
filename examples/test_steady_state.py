@@ -6,7 +6,7 @@ docker exec -it nemocrys bash
 
 install additional stuff
 
-pip3 install pyelmer
+pip3 install objectgmsh
 source /usr/local/bin/dolfinx-complex-mode
 
 TODO create own Dockerfile for all this
@@ -160,7 +160,7 @@ with open("examples/materials/materials.yml") as f:
     material_data = yaml.safe_load(f)
 
 # Ambient Temperature
-T_amb = 293.15#300.0  # K
+T_amb = 293.15 # K
 
 # Melting Temperature
 T_melt = material_data["tin-solid"]["Melting Point"] # 505.K
@@ -248,7 +248,7 @@ dofs_A = dolfinx.fem.locate_dofs_topological(Space_A, 1, sourrounding_facets)
 value_A = dolfinx.Function(Space_A)
 with value_A.vector.localForm() as loc:  # according to https://jorgensd.github.io/dolfinx-tutorial/chapter2/ns_code2.html#boundary-conditions
     loc.set(0)
-bcs_A = []# [dolfinx.DirichletBC(value_A, dofs_A)]
+bcs_A = [dolfinx.DirichletBC(value_A, dofs_A)]
 
 em_problem = Maxwell(Space_A)
 em_form = em_problem.setup(em_problem.solution, dV, dA, dI, mu_0, omega, varsigma, current_density)
@@ -302,7 +302,7 @@ heat_problem = Heat(Space_T)
 res_dir = "examples/results/"
 vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "steady_state_result.pvd", "w")
 
-for iteration in range(4):
+for iteration in range(10):
     print(f"Mesh update iteration {iteration}")
     set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, em_problem.solution, f_heat, bcs_T, desired_temp=T_melt, interface=Interface.melt_crystal, facet_tags=facet_tags)
     heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, em_problem.solution, f_heat)

@@ -1,8 +1,8 @@
 import yaml
+import gmsh
 import numpy as np
 from .czochralski import crucible, surrounding
-from pyelmer.gmsh import *
-
+from objectgmsh import Model, Shape, factory, MeshControlLinear, MeshControlExponential
 # this is a package I created für Elmer simulations
 from .czochralski import crucible, melt, crystal, inductor, seed, crucible_adapter ,crucible_support, axis_top, surrounding
 import os
@@ -166,7 +166,7 @@ def create_geometry():
     MeshControlExponential(model, Inductor, Inductor.mesh_size)
 
     model.generate_mesh(
-        size_factor=2
+        size_factor=1
     )  # increase / decrease size factor to adapt number of cells
     # model.show()  # uncomment this to visualize the mesh
     model.write_msh("./mesh.msh2")

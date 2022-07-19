@@ -1,7 +1,6 @@
 import yaml
-
-from pyelmer.gmsh import *
-
+import numpy as np
+from objectgmsh import Shape, cylinder, factory, cut
 # TODO stl import
 
 
@@ -78,7 +77,7 @@ def melt(
                 data = yaml.safe_load(f)["tin-liquid"]
             rho = data["Density"]
             gamma = data["Surface Tension"]
-            beta = data["Beta"] / 360 * 2 * np.pi  # theta in Landau87
+            beta = data["Beta"] / 360 * 2 * np.pi # theta in Landau87
         a = (2 * gamma / (rho * g)) ** 0.5  # capillary constant
         h = a * (1 - 1 * np.sin(beta)) ** 0.5
         z = np.linspace(0, h, res)[1:]
