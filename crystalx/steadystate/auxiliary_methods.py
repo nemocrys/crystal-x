@@ -3,6 +3,7 @@ import ufl
 
 import numpy as np
 from scipy import optimize
+from petsc4py import PETSc
 
 import matplotlib.pyplot as plt
 
@@ -15,9 +16,9 @@ from .equations.laplace import Laplace
 
 def set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat, bcs_T, desired_temp, interface, facet_tags):
     
-    interface_facets = facet_tags.indices[
-        facet_tags.values == interface.value
-    ]
+    interface_facets = facet_tags.find(
+        interface.value
+    )
 
     dofs_interface = dolfinx.fem.locate_dofs_topological(
         heat_problem.solution.function_space, 1, interface_facets
@@ -97,7 +98,7 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
     "CG", mesh.ufl_cell(), 1
     )
     
-    Space_MM = dolfinx.FunctionSpace(mesh, vector_element)
+    Space_MM = dolfinx.fem.FunctionSpace(mesh, vector_element)
 
     laplace_problem = Laplace(Space_MM)
     form_MM = laplace_problem.setup(laplace_problem.solution, dV, dA, dI)
@@ -105,7 +106,7 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
 
     #---------------------------------------------------------------------------------------------------#
     # set function for displacement on melt-crystal interface
-    displacement_function = dolfinx.Function(Space_MM)
+    displacement_function = dolfinx.fem.Function(Space_MM)
 
     #---------------------------------------------------------------------------------------------------#
     # calculate displacement on melt crystal interface 
@@ -118,9 +119,9 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
     moved_interface = project_graphs(old_interface_coordinates, new_interface_coordinates, melt)
     moved_interface_melt = moved_interface
 
-    interface_facets = facet_tags.indices[
-        facet_tags.values == interface.value
-    ]
+    interface_facets = facet_tags.find(
+        interface.value
+    )
 
     dofs_interface = dolfinx.fem.locate_dofs_topological(
         function.function_space, 1, interface_facets
@@ -164,42 +165,42 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
 
     #---------------------------------------------------------------------------------------------------#
     # set displacement as dirichlet BC
-    interface_facets = facet_tags.indices[
-        facet_tags.values == interface.value
-    ]
+    interface_facets = facet_tags.find(
+        interface.value
+    )
 
     dofs_interface = dolfinx.fem.locate_dofs_topological(
         Space_MM, 1, interface_facets
     )
 
-    bcs_MM = [dolfinx.DirichletBC(displacement_function, dofs_interface)]
+    bcs_MM = [dolfinx.fem.dirichletbc(displacement_function, dofs_interface)]
 
     #---------------------------------------------------------------------------------------------------#
     # set other boundary conditions
 
-    sourrounding_facets = facet_tags.indices[
-        facet_tags.values == Boundary.surrounding.value
-    ]
+    sourrounding_facets = facet_tags.find(
+        Boundary.surrounding.value
+    )
 
-    symmetry_axis_facets = facet_tags.indices[
-            facet_tags.values == Boundary.symmetry_axis.value
-        ]
+    symmetry_axis_facets = facet_tags.find(
+            Boundary.symmetry_axis.value
+    )
 
-    crystal_surface_facets = facet_tags.indices[
-            facet_tags.values == Surface.crystal.value
-        ]
+    crystal_surface_facets = facet_tags.find(
+            Surface.crystal.value
+    )
 
-    crucible_surface_facets = facet_tags.indices[
-            facet_tags.values == Surface.crucible.value
-        ]
+    crucible_surface_facets = facet_tags.find(
+            Surface.crucible.value
+    )
 
-    meniscus_surface_facets = facet_tags.indices[
-            facet_tags.values == Surface.meniscus.value
-        ]
+    meniscus_surface_facets = facet_tags.find(
+            Surface.meniscus.value
+    )
 
-    melt_flat_surface_facets = facet_tags.indices[
-            facet_tags.values == Surface.melt_flat.value
-        ]
+    melt_flat_surface_facets = facet_tags.find(
+            Surface.melt_flat.value
+    )
     #---------------------------------------------------------------------------------------------------#
     dirichlet_facets = np.concatenate([sourrounding_facets, crucible_surface_facets, crystal_surface_facets, meniscus_surface_facets, melt_flat_surface_facets])
 
@@ -207,26 +208,22 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
         Space_MM, 1, dirichlet_facets
     )
 
-    value_MM = dolfinx.Function(Space_MM)
+    value_MM = dolfinx.fem.Function(Space_MM)
     with value_MM.vector.localForm() as loc:
         loc.set(0)
-    bcs_MM.append(dolfinx.DirichletBC(value_MM, dofs_hom_dirichlet))
+    bcs_MM.append(dolfinx.fem.dirichletbc(value_MM, dofs_hom_dirichlet))
 
     #---------------------------------------------------------------------------------------------------#
 
     dirichlet_x_facets = symmetry_axis_facets
     dofs_symmetry_axis = dolfinx.fem.locate_dofs_topological(
-        (Space_MM.sub(0), Space_MM.sub(0).collapse(),),
+        Space_MM.sub(0),
         1,
         dirichlet_x_facets,
     )
 
-    value_MM = dolfinx.Function(Space_MM.sub(0).collapse()) # only BC on x-component
-    with value_MM.vector.localForm() as loc:
-        loc.set(0)
-
-    bcs_MM.append(dolfinx.DirichletBC(
-            value_MM, dofs_symmetry_axis, Space_MM.sub(0)
+    bcs_MM.append(dolfinx.fem.dirichletbc(
+            PETSc.ScalarType(0), dofs_symmetry_axis, Space_MM.sub(0)
         )
     )
 
@@ -238,7 +235,7 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
     return laplace_problem.solution
 
 def mesh_move(mesh, displacement):
-    mesh.geometry.x[:, :2] += displacement.compute_point_values().real
+    mesh.geometry.x[:, :mesh.geometry.dim] += displacement.x.array.reshape((-1, mesh.geometry.dim)).real
 
 
 def dofs_with_threshold(function, volume, cell_tags, threshold_function):
@@ -278,20 +275,22 @@ def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volu
     # get dofs that need to be moved
     dofs_to_move_on_interface = dofs_interface[[dof in marked_dofs for dof in dofs_interface]]
     #---------------------------------------------------------------------------------------------------#
-    
-    bb_tree = dolfinx.cpp.geometry.BoundingBoxTree(function.function_space.mesh, function.function_space.mesh.geometry.dim)
+    bb_tree = dolfinx.geometry.BoundingBoxTree(function.function_space.mesh, function.function_space.mesh.geometry.dim)
     cell_ids = np.array([])
     
 
     for point in function.function_space.tabulate_dof_coordinates()[marked_dofs]: #function.function_space.mesh.geometry.x[marked_dofs]
-        cell_candidates = dolfinx.cpp.geometry.compute_collisions(bb_tree, point)
-        cell_ids = np.concatenate((cell_ids, cell_candidates), axis = None)
+        cell_candidates = dolfinx.geometry.compute_collisions(bb_tree, point)
+        cell_ids = np.concatenate((cell_ids, cell_candidates.links(0)), axis = None)
     
     cell_ids = np.unique(cell_ids).astype(int)
     
     interface_coords = []
 
-    function_values = function.compute_point_values().real
+    value_space = dolfinx.fem.FunctionSpace(function.function_space.mesh, ("CG",1))
+    values = dolfinx.fem.Function(value_space)
+    values.interpolate(function)
+    function_values = values.vector.array.real
 
     coordinates = function.function_space.mesh.geometry.x
     threshold = T_melt

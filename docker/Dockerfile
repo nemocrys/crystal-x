@@ -7,7 +7,7 @@
 # docker run --rm -it --mount type=bind,source="$(pwd)",target=/root nemocrys/dolfinx:2022.07.27
 
 
-FROM dolfinx/dolfinx:v0.4.1-r1
+FROM dolfinx/dolfinx:latest
 
 RUN pip3 install \
     meshio==4.4.*\
