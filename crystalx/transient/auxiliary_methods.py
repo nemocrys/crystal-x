@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.linalg import solve
+from petsc4py import PETSc
 import dolfinx
 from geometry.geometry import Interface
 import ufl
@@ -228,7 +229,7 @@ def mesh_displacement(displacement_function, Volume, Boundary, Surface, Interfac
         displacement_function.function_space, 1, meniscus_facets
     )
 
-    bcs_MM = [dolfinx.DirichletBC(displacement_function, np.concatenate([dofs_interface, dofs_meniscus]))]
+    bcs_MM = [dolfinx.fem.dirichletbc(displacement_function, np.concatenate([dofs_interface, dofs_meniscus]))]
 
     #---------------------------------------------------------------------------------------------------#
     # set other boundary conditions
@@ -252,26 +253,22 @@ def mesh_displacement(displacement_function, Volume, Boundary, Surface, Interfac
         displacement_function.function_space, 1, dirichlet_facets
     )
 
-    value_MM = dolfinx.Function(displacement_function.function_space)
+    value_MM = dolfinx.fem.Function(displacement_function.function_space)
     with value_MM.vector.localForm() as loc:
         loc.set(0)
-    bcs_MM.append(dolfinx.DirichletBC(value_MM, dofs_hom_dirichlet))
+    bcs_MM.append(dolfinx.fem.dirichletbc(value_MM, dofs_hom_dirichlet))
 
     #---------------------------------------------------------------------------------------------------#
 
     dirichlet_x_facets = symmetry_axis_facets
     dofs_symmetry_axis = dolfinx.fem.locate_dofs_topological(
-        (displacement_function.function_space.sub(0), displacement_function.function_space.sub(0).collapse(),),
+        displacement_function.function_space.sub(0),
         1,
         dirichlet_x_facets,
     )
-
-    value_MM = dolfinx.Function(displacement_function.function_space.sub(0).collapse()) # only BC on x-component
-    with value_MM.vector.localForm() as loc:
-        loc.set(0)
-
-    bcs_MM.append(dolfinx.DirichletBC(
-            value_MM, dofs_symmetry_axis, displacement_function.function_space.sub(0)
+    
+    bcs_MM.append(dolfinx.fem.dirichletbc(
+            PETSc.ScalarType(0), dofs_symmetry_axis, displacement_function.function_space.sub(0)
         )
     )
 
@@ -283,7 +280,7 @@ def mesh_displacement(displacement_function, Volume, Boundary, Surface, Interfac
     return laplace_problem.solution
 
 def mesh_move(mesh, displacement):
-    mesh.geometry.x[:, :2] += displacement.compute_point_values().real
+    mesh.geometry.x[:, :mesh.geometry.dim] += displacement.x.array.reshape((-1, mesh.geometry.dim)).real
     
 
 def interface_displacement(displacement_function, normal_velocity_vector, v_pull_vector, Dt, beta, function_space, interface, meniscus, facet_tags, ax, fig):

@@ -38,8 +38,7 @@ from mpi4py import MPI
 # Geometry Imports
 from geometry.geometry import create_geometry
 from geometry.geometry import Volume, Interface, Surface, Boundary
-from geometry.gmsh_helpers import gmsh_model_to_mesh
-
+from dolfinx.io.gmshio import model_to_mesh
 #---------------------------------------------------------------------------------------------------#
 # transient Imports
 
@@ -85,8 +84,9 @@ try:
     mesh, cell_tags, facet_tags = load_mesh(MPI.COMM_WORLD, "mesh.xdmf")
 except:
     gmsh_model = create_geometry()
-    mesh, cell_tags, facet_tags = gmsh_model_to_mesh(
-        gmsh_model, cell_data=True, facet_data=True, gdim=gdim
+    model_rank = 0
+    mesh, cell_tags, facet_tags = model_to_mesh(
+        gmsh_model, MPI.COMM_WORLD, model_rank, gdim=gdim
     )
 
 #####################################################################################################
@@ -147,17 +147,17 @@ vector_element_DG = lambda degree: ufl.VectorElement(
 #---------------------------------------------------------------------------------------------------#
 
 # Function Space for Maxwell Equation
-Space_A = dolfinx.FunctionSpace(mesh, scalar_element(degree=1))  # A
+Space_A = dolfinx.fem.FunctionSpace(mesh, scalar_element(degree=1))  # A
 
 # Function Space for Heat Equation
-Space_T = dolfinx.FunctionSpace(mesh, scalar_element(degree=2))  # T
-Space_T_0 = dolfinx.FunctionSpace(mesh, scalar_element(degree=1))  # T_0
+Space_T = dolfinx.fem.FunctionSpace(mesh, scalar_element(degree=2))  # T
+Space_T_0 = dolfinx.fem.FunctionSpace(mesh, scalar_element(degree=1))  # T_0
 
 # Function Space for Interface Displacement in normal direction
-Space_V = dolfinx.FunctionSpace(mesh, scalar_element(degree=1))  # V
+Space_V = dolfinx.fem.FunctionSpace(mesh, scalar_element(degree=1))  # V
 
 # Function Space for Mesh Movement
-Space_MM = dolfinx.FunctionSpace(mesh, vector_element(degree=1)) # MM
+Space_MM = dolfinx.fem.FunctionSpace(mesh, vector_element(degree=1)) # MM
 #####################################################################################################
 #                                                                                                   #
 #                                       PARAMETERS                                                  #
@@ -184,7 +184,7 @@ h = 5  # W / (m^2 K)
 
 #---------------------------------------------------------------------------------------------------#
 
-Dt = 1e-2
+Dt = 1e-1
 t_end = 500 * Dt
 
 v_pull = 4  # mm/min
@@ -203,8 +203,8 @@ freq = 13.5e3  # in Hz
 omega = 2 * np.pi * freq
 current_density = 100 * 35367.76513153229  # current [A] / Area [m^2]
 
-current = dolfinx.Constant(
-    mesh, 0
+current = dolfinx.fem.Constant(
+    mesh, PETSc.ScalarType(0)
 ) 
 
 #####################################################################################################
@@ -214,18 +214,18 @@ current = dolfinx.Constant(
 #####################################################################################################
 
 # Discontinuous function space for material coefficients
-Q = dolfinx.FunctionSpace(mesh, ("DG", 0))
+Q = dolfinx.fem.FunctionSpace(mesh, ("DG", 0))
 
 # heat conductivity
-kappa = dolfinx.Function(Q, name="kappa")
+kappa = dolfinx.fem.Function(Q, name="kappa")
 # electric conductivity
-varsigma = dolfinx.Function(Q, name="varsigma")
+varsigma = dolfinx.fem.Function(Q, name="varsigma")
 # emissivity
-varepsilon = dolfinx.Function(Q, name="varepsilon")
+varepsilon = dolfinx.fem.Function(Q, name="varepsilon")
 # density
-rho = dolfinx.Function(Q, name="rho")
+rho = dolfinx.fem.Function(Q, name="rho")
 # heat capacity
-capacity = dolfinx.Function(Q, name="capacity")
+capacity = dolfinx.fem.Function(Q, name="capacity")
 
 with open("examples/materials/materials.yml") as f:
     material_data = yaml.safe_load(f)
@@ -234,7 +234,9 @@ with open("examples/materials/materials.yml") as f:
 
 with kappa.vector.localForm() as loc_kappa, varsigma.vector.localForm() as loc_varsigma, varepsilon.vector.localForm() as loc_varepsilon, rho.vector.localForm() as loc_rho, capacity.vector.localForm() as loc_capacity:
     for vol in Volume:
-        cells = cell_tags.indices[cell_tags.values == vol.value]
+        cells = cell_tags.find(
+            vol.value
+        )
         num_cells = len(cells)
         loc_kappa.setValues(
             cells, np.full(num_cells, material_data[vol.material]["Heat Conductivity"])
@@ -255,15 +257,15 @@ with kappa.vector.localForm() as loc_kappa, varsigma.vector.localForm() as loc_v
 #                                 SOLVE MAXWELLS EQUATIONS                                          #
 #                                                                                                   #
 #####################################################################################################
-sourrounding_facets = facet_tags.indices[
-        facet_tags.values == Boundary.surrounding.value
-    ]
+sourrounding_facets = facet_tags.find(
+    Boundary.surrounding.value
+)
 dofs_A = dolfinx.fem.locate_dofs_topological(Space_A, 1, sourrounding_facets)
 
-value_A = dolfinx.Function(Space_A)
+value_A = dolfinx.fem.Function(Space_A)
 with value_A.vector.localForm() as loc:  # according to https://jorgensd.github.io/dolfinx-tutorial/chapter2/ns_code2.html#boundary-conditions
     loc.set(0)
-bcs_A = []# [dolfinx.DirichletBC(value_A, dofs_A)]
+bcs_A = [dolfinx.fem.dirichletbc(value_A, dofs_A)]
 
 em_problem = Maxwell(Space_A)
 em_form = em_problem.setup(em_problem.solution, dV, dA, dI, mu_0, omega, varsigma, current_density)
@@ -298,10 +300,10 @@ dofs_T = dolfinx.fem.locate_dofs_topological(
     Space_T, 1, np.concatenate([axis_bottom_facets, axis_top_facets, coil_inside_facets, sourrounding_facets])
 )
 
-value_T = dolfinx.Function(Space_T)
+value_T = dolfinx.fem.Function(Space_T)
 with value_T.vector.localForm() as loc:
     loc.set(T_amb)
-bcs_T = [dolfinx.DirichletBC(value_T, dofs_T)]
+bcs_T = [dolfinx.fem.dirichletbc(value_T, dofs_T)]
 
 #---------------------------------------------------------------------------------------------------#
 # Set melting temperature on crystal melt interface 
@@ -314,13 +316,13 @@ dofs_interface = dolfinx.fem.locate_dofs_topological(
     Space_T, 1, interface_facets
 )
 
-value_T = dolfinx.Function(Space_T)
+value_T = dolfinx.fem.Function(Space_T)
 with value_T.vector.localForm() as loc:
     # values = loc.getArray()
     # values[dofs_interface] = T_melt * np.ones(shape=(len(dofs_interface),))
     # loc.setArray(values)
     loc.set(T_melt)
-bcs_T.append(dolfinx.DirichletBC(value_T, dofs_interface))
+bcs_T.append(dolfinx.fem.dirichletbc(value_T, dofs_interface))
 
 #---------------------------------------------------------------------------------------------------#
 
@@ -412,10 +414,10 @@ vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "result.pvd", "w")
 
 #---------------------------------------------------------------------------------------------------#
 for step, t in enumerate(np.arange(0, t_end + Dt, Dt)):
-
+    iteration_start_time = time()
     #---------------------------------------------------------------------------------------------------#
     if step!=0:
-        fields = [heat_problem.solution, em_problem.solution, stefan_problem.solution, displacement_function, displacement]
+        fields = [heat_problem.solution]#, em_problem.solution, stefan_problem.solution, displacement_function, displacement]
         output_fields = [sol._cpp_object for sol in fields]
         vtk.write_function(output_fields, t)
     #---------------------------------------------------------------------------------------------------#
@@ -442,7 +444,7 @@ for step, t in enumerate(np.arange(0, t_end + Dt, Dt)):
     normal_velocity_vector = np.repeat(normal_velocity_values.reshape(-1,1), n.shape[1], axis=1) * n 
 
     # Calculate Displacement Vector on Interface as u = Dt * ((n * (v_pull + v_growth)) n)
-    displacement_function = dolfinx.Function(Space_MM, name="displacement_function")
+    displacement_function = dolfinx.fem.Function(Space_MM, name="displacement_function")
 
     v_pull_vector = v_pull * np.repeat(np.array([0.0 , 1.0, 0.0]).reshape(3,1), normal_velocity_vector.shape[0] , axis=1).T
 
@@ -474,8 +476,13 @@ for step, t in enumerate(np.arange(0, t_end + Dt, Dt)):
             int(elapsed % 3600 / 60),
             int((elapsed % 3600) % 60),
         )
+        elapsed = int(time() - iteration_start_time)
+        i_e_m, i_e_s = (
+            int(elapsed % 3600 / 60),
+            int((elapsed % 3600) % 60),
+        )
         print(
-            f"step {step}: time {t:.8f} s --- temperature solution in {e_h:.0f} h {e_m:.0f} min {e_s:.0f} s "
+            f"step {step}: time {t:.8f} s --- temperature solution in {i_e_m:.0f} min {i_e_s:.0f} s --- total runtime {e_h:.0f} h {e_m:.0f} min {e_s:.0f} s "
         )
 #---------------------------------------------------------------------------------------------------#
 vtk.close()
