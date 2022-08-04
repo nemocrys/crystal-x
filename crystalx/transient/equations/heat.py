@@ -15,7 +15,7 @@ class Heat:
         # test function
         self._test_function = ufl.TestFunction(V)
         # solution variable
-        self._solution = dolfinx.Function(V, name="T")
+        self._solution = dolfinx.fem.Function(V, name="T")
 
         # radial coordinate
         self._r = ufl.SpatialCoordinate(V.mesh)[0]
@@ -67,11 +67,11 @@ class Heat:
     def assemble(self, Form, bcs):
         Gain_T = ufl.derivative(Form,  self._solution,  self._d_T)
 
-        self._problem_T = dolfinx.fem.NonlinearProblem(Form,  self._solution, bcs, J=Gain_T)
+        self._problem_T = dolfinx.fem.petsc.NonlinearProblem(Form,  self._solution, bcs, J=Gain_T)
 
     def solve(self):
 
-        solver_T = dolfinx.NewtonSolver(MPI.COMM_WORLD,  self._problem_T)
+        solver_T = dolfinx.nls.petsc.NewtonSolver(MPI.COMM_WORLD,  self._problem_T)
         # TODO set proper parameters
         solver_T.atol = 1e-8
         solver_T.rtol = 1e-8

@@ -13,7 +13,7 @@ class Maxwell:
         # test function
         self._test_function = ufl.TestFunction(V)
         # solution variable
-        self._solution = dolfinx.Function(V, name="A")
+        self._solution = dolfinx.fem.Function(V, name="A")
 
         # radial coordinate
         self._r = ufl.SpatialCoordinate(V.mesh)[0]
@@ -46,11 +46,11 @@ class Maxwell:
         # TODO what is Re(A), Im(A)
         Gain_A = ufl.derivative(Form,  self._solution,  self._d_A)
 
-        self._problem_EM = dolfinx.fem.NonlinearProblem(Form,  self._solution, bcs, J=Gain_A)
+        self._problem_EM = dolfinx.fem.petsc.NonlinearProblem(Form,  self._solution, bcs, J=Gain_A)
 
     def solve(self):
 
-        solver_EM = dolfinx.NewtonSolver(MPI.COMM_WORLD,  self._problem_EM)
+        solver_EM = dolfinx.nls.petsc.NewtonSolver(MPI.COMM_WORLD,  self._problem_EM)
         # TODO set proper parameters
         solver_EM.atol = 1e-8
         solver_EM.rtol = 1e-8

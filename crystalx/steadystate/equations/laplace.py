@@ -11,7 +11,7 @@ class Laplace:
         # test function
         self._test_function = ufl.TestFunction(V)
         # solution variable
-        self._solution = dolfinx.Function(V, name="V")
+        self._solution = dolfinx.fem.Function(V, name="V")
 
     @property
     def solution(self):
@@ -31,11 +31,11 @@ class Laplace:
     def assemble(self, Form, bcs):
         Gain = ufl.derivative(Form,  self._solution,  self._d_V)
 
-        self._problem = dolfinx.fem.NonlinearProblem(Form,  self._solution, bcs, J=Gain)
+        self._problem = dolfinx.fem.petsc.NonlinearProblem(Form,  self._solution, bcs, J=Gain)
 
     def solve(self):
 
-        solver = dolfinx.NewtonSolver(MPI.COMM_WORLD,  self._problem)
+        solver = dolfinx.nls.petsc.NewtonSolver(MPI.COMM_WORLD,  self._problem)
         # TODO set proper parameters
         solver.atol = 1e-8
         solver.rtol = 1e-8

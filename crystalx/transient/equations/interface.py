@@ -14,7 +14,7 @@ class Stefan:
         # test function
         self._test_function = ufl.TestFunction(V)
         # solution variable
-        self._solution = dolfinx.Function(V, name="V_normal")
+        self._solution = dolfinx.fem.Function(V, name="V_normal")
 
         # radial coordinate
         self._r = ufl.SpatialCoordinate(V.mesh)[0]
@@ -29,21 +29,22 @@ class Stefan:
     
     def setup(self, V, dV, dA, dI, kappa, latent_heat, T):
         N = ufl.FacetNormal(V.function_space.mesh)
-        a = (
+        F = (
             ufl.inner(ufl.avg(self._d_V), ufl.avg(self.test_function)) 
         ) * 2*pi*self._r*  dI(Interface.melt_crystal.value) # Need to use trial function here for bilinear form
 
-        L = (1.0 / latent_heat * 
+        F -= (1.0 / latent_heat * 
             ufl.inner(ufl.jump(ufl.inner(kappa * ufl.grad(T), N)), ufl.avg(self.test_function)) 
         ) * 2*pi*self._r*  dI(Interface.melt_crystal.value)
         
-        return dolfinx.fem.form.Form(a), dolfinx.fem.form.Form(L)
+        return dolfinx.fem.form(ufl.lhs(F)), dolfinx.fem.form(ufl.rhs(F))
+
 
     def assemble(self, a, L, bcs, interface_dofs):
-        A = dolfinx.fem.assemble_matrix(a, bcs=bcs)
+        A = dolfinx.fem.petsc.assemble_matrix(a, bcs=bcs)
         A.assemble()
-        b = dolfinx.fem.create_vector(L)
-        dolfinx.fem.assemble_vector(b, L)
+        b = dolfinx.fem.petsc.create_vector(L)
+        dolfinx.fem.petsc.assemble_vector(b, L)
 
         self._A = A[interface_dofs, interface_dofs].real
         self._b = b[interface_dofs].real

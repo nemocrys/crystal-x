@@ -23,9 +23,9 @@ def project(function, functionspace, **kwargs):
     """
     if "name" in kwargs.keys():
         assert isinstance(kwargs["name"], str)
-        sol = dolfinx.Function(functionspace, name = kwargs["name"])
+        sol = dolfinx.fem.Function(functionspace, name = kwargs["name"])
     else:
-        sol = dolfinx.Function(functionspace)
+        sol = dolfinx.fem.Function(functionspace)
     
     w = ufl.TrialFunction(functionspace)
     v = ufl.TestFunction(functionspace)
@@ -33,7 +33,7 @@ def project(function, functionspace, **kwargs):
     a = ufl.inner(w, v) * ufl.dx
     L = ufl.inner(function, v) * ufl.dx
 
-    problem = dolfinx.fem.LinearProblem(a, L, bcs=[])
+    problem = dolfinx.fem.petsc.LinearProblem(a, L, bcs=[])
     sol.interpolate(problem.solve())
 
     return sol
@@ -75,7 +75,7 @@ def save_function(function, name="function", directory=""):
 # https://fenicsproject.discourse.group/t/i-o-from-xdmf-hdf5-files-in-dolfin-x/3122/10
 def load_function(V, datafile, normalize=False):
     
-    f = dolfinx.Function(V)
+    f = dolfinx.fem.Function(V)
     # block size of vector
     bs = f.vector.getBlockSize()
     
@@ -87,17 +87,14 @@ def load_function(V, datafile, normalize=False):
     # in case of DG fields, these are the Gauss point coordinates
     co = V.tabulate_dof_coordinates()
 
-    # index map
-    im = V.dofmap.index_map.global_indices()
-
     tol = 1.0e-8
     tolerance = int(-np.log10(tol))
 
     # since in parallel, the ordering of the dof ids might change, so we have to find the
     # mapping between original and new id via the coordinates
     ci = 0
-    for i in im:
-        
+    for i in range(co.shape[0]):
+
         ind = np.where((np.round(coords,tolerance) == np.round(co[ci],tolerance)).all(axis=1))[0]
         
         # only write if we've found the index
