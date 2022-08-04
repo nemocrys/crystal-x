@@ -52,11 +52,6 @@ from crystalx.steadystate.auxiliary_methods import set_temperature_scaling, mesh
 
 #---------------------------------------------------------------------------------------------------#
 
-# crystal-x helpers
-from crystalx.helpers import save_function, save_mesh
-
-#---------------------------------------------------------------------------------------------------#
-
 # Check if complex mode is activated
 if not np.issubdtype(PETSc.ScalarType, np.complexfloating):
     raise RuntimeError(
@@ -327,16 +322,4 @@ vtk.close()
 
 print(heat_problem._heat_scaling)
 
-# #####################################################################################################
-# #                                                                                                   #
-# #                                          OUTPUT                                                   #
-# #                                                                                                   #
-# #####################################################################################################
 
-res_dir = "examples/results/"
-
-# Save Mesh as initial geometry for transient
-save_mesh(mesh, cell_tags, facet_tags, MPI.COMM_WORLD)
-
-# Save steadystate solution as initial condition
-save_function(heat_problem.solution, name="steadystate_solution")
