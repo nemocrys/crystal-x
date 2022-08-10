@@ -481,8 +481,26 @@ def project_graphs(old_coordinates, new_coordinates, volume):
         ax.set_xlim([0.0, 0.004])
         fig.savefig(f"interface_displacement_{volume.name}.png")
         
-        print(volume.name)
-        print(new_coordinates.shape[0]-old_coordinates.shape[1])
-        print(new_coordinates.shape[0]-moved_coordinates.shape[0])
+        # print(volume.name)
+        # print(new_coordinates.shape[0]-old_coordinates.shape[1])
+        # print(new_coordinates.shape[0]-moved_coordinates.shape[0])
 
     return moved_coordinates
+
+def evaluate_function(function, points):
+    bb_tree = dolfinx.geometry.BoundingBoxTree(function.function_space.mesh, function.function_space.mesh.topology.dim)
+
+    cells = []
+    points_on_proc = []
+    # Find cells whose bounding-box collide with the the points
+    cell_candidates = dolfinx.geometry.compute_collisions(bb_tree, points.T)
+    # Choose one of the cells that contains the point
+    colliding_cells = dolfinx.geometry.compute_colliding_cells(function.function_space.mesh, cell_candidates, points.T)
+    for i, point in enumerate(points.T):
+        if len(colliding_cells.links(i))>0:
+            points_on_proc.append(point)
+            cells.append(colliding_cells.links(i)[0])
+    
+    points_on_proc = np.array(points_on_proc, dtype=np.float64)
+     
+    return function.eval(points_on_proc, cells)

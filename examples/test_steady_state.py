@@ -48,7 +48,7 @@ from crystalx.steadystate.equations.maxwell import Maxwell
 from crystalx.steadystate.equations.heat import Heat
 
 # crystal-x auxiliary methods
-from crystalx.steadystate.auxiliary_methods import set_temperature_scaling, mesh_move, interface_displacement
+from crystalx.steadystate.auxiliary_methods import set_temperature_scaling, mesh_move, interface_displacement, evaluate_function
 
 #---------------------------------------------------------------------------------------------------#
 
@@ -167,7 +167,7 @@ h = 5  # W / (m^2 K)
 
 #---------------------------------------------------------------------------------------------------#
 
-v_pull = 4  # mm/min
+v_pull = 0 #4  # mm/min
 v_pull *= 1.6666666e-5  # m/s
 
 #---------------------------------------------------------------------------------------------------#
@@ -181,11 +181,8 @@ mu_0 = 1.25663706e-6  # in V s/(A m)
 freq = 13.5e3  # in Hz
 # current frequency
 omega = 2 * np.pi * freq
-current_density = 100 * 35367.76513153229  # current [A] / Area [m^2]
-
-current = dolfinx.fem.Constant(
-    mesh, PETSc.ScalarType(0)
-) 
+current = 100 # A
+current_density = current * 35367.76513153229  # current [A] / Area [m^2]
 
 #####################################################################################################
 #                                                                                                   #
@@ -297,7 +294,7 @@ heat_problem = Heat(Space_T)
 res_dir = "examples/results/"
 vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "steady_state_result.pvd", "w")
 
-for iteration in range(7):
+for iteration in range(10):
     print(f"Mesh update iteration {iteration}")
     set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, em_problem.solution, f_heat, bcs_T, desired_temp=T_melt, interface=Interface.melt_crystal, facet_tags=facet_tags)
     heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, em_problem.solution, f_heat)
@@ -320,6 +317,18 @@ for iteration in range(7):
     print(f"L2-Error: {error:.2e}")
 vtk.close()
 
-print(heat_problem._heat_scaling)
+print(f"Heat scaling: {heat_problem._heat_scaling}")
+print(f"Electric current: {current * np.sqrt(heat_problem._heat_scaling)} ")
+print(f"pulling velocity: {v_pull} m/s")
+measurement_points = {
+    "crc-wall": np.array([0.055, 0.02, 0.0]),
+    "melt-control": np.array([0.035, 0.005, 0.0]),
+    "p1_crys": np.array([0.0, 0.05863932, 0.0]),
+    "p2_crys": np.array([0.0, 0.08363932, 0.0]),
+    "p3_crys": np.array([0.0, 0.10863932, 0.0]),
+}
 
+points = np.vstack(list(measurement_points.values()))
+values = evaluate_function(heat_problem.solution, points.T)
+print(values.real - 273.15)
 
