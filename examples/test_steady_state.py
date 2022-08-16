@@ -295,7 +295,10 @@ heat_problem = Heat(Space_T)
 res_dir = "examples/results/"
 vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "steady_state_result.pvd", "w")
 
-for iteration in range(15):
+error = 0.0
+old_error = 1e+10
+
+for iteration in range(20):
     print(f"Mesh update iteration {iteration}")
     with dolfinx.common.Timer("~Heat Scaling"):
         set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, em_problem.solution, f_heat, bcs_T, desired_temp=T_melt, interface=Interface.melt_crystal, facet_tags=facet_tags)
@@ -322,8 +325,18 @@ for iteration in range(15):
     print(f"L2-Error: {error:.2e}\n")
     if error < TOL:
         print(f"Error on interface is sufficiently small. \nIteration loop is stopped.\n")
+        # break
+    if error > old_error + TOL:
+        print("Error is increasing. \nBreak solving loop!\n")
+        exit()
         break
+    if (old_error - error) < TOL:
+        print("Error not decreasing. \nBreak solving loop!\n")
+        # break
+        
 
+    old_error = error
+    
     mesh_move(mesh, displacement_function)
 vtk.close()
 
