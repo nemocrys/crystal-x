@@ -74,7 +74,7 @@ gmsh_model = create_geometry()
 
 # Loading of mesh, cell tags and facet tags
 model_rank = 0
-mesh, cell_tags, facet_tags = model_to_mesh(
+mesh, cell_tags, facet_tags = dolfinx.io.gmshio.model_to_mesh(
     gmsh_model, MPI.COMM_WORLD, model_rank, gdim=gdim
 )
 
@@ -165,6 +165,7 @@ f_heat = 0
 
 h = 5  # W / (m^2 K)
 
+TOL = 1e-8
 #---------------------------------------------------------------------------------------------------#
 
 v_pull = 0 #4  # mm/min
@@ -294,7 +295,7 @@ heat_problem = Heat(Space_T)
 res_dir = "examples/results/"
 vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "steady_state_result.pvd", "w")
 
-for iteration in range(10):
+for iteration in range(20):
     print(f"Mesh update iteration {iteration}")
     set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, em_problem.solution, f_heat, bcs_T, desired_temp=T_melt, interface=Interface.melt_crystal, facet_tags=facet_tags)
     heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, em_problem.solution, f_heat)
@@ -307,19 +308,25 @@ for iteration in range(10):
     fields = [heat_problem.solution, em_problem.solution,displacement_function]
     output_fields = [sol._cpp_object for sol in fields]
     vtk.write_function(output_fields, iteration)
-    mesh_move(mesh, displacement_function)
     
     T_melt_function = dolfinx.fem.Constant(
         mesh, PETSc.ScalarType(T_melt)
     ) 
 
     error = np.sqrt(MPI.COMM_WORLD.allreduce(dolfinx.fem.assemble_scalar(dolfinx.fem.form((heat_problem.solution - T_melt_function)**2 * dI(Interface.melt_crystal.value))), op=MPI.SUM)).real
-    print(f"L2-Error: {error:.2e}")
+    print(f"L2-Error: {error:.2e}\n")
+    if error < TOL:
+        print(f"Error on interface is sufficiently small. \nIteration loop is stopped.\n")
+        break
+
+    mesh_move(mesh, displacement_function)
 vtk.close()
 
-print(f"Heat scaling: {heat_problem._heat_scaling}")
-print(f"Electric current: {current * np.sqrt(heat_problem._heat_scaling)} ")
+print()
+print(f"Heat scaling: {heat_problem._heat_scaling:.4f}")
+print(f"Electric current: {current * np.sqrt(heat_problem._heat_scaling):.1f} ")
 print(f"pulling velocity: {v_pull} m/s")
+
 measurement_points = {
     "crc-wall": np.array([0.055, 0.02, 0.0]),
     "melt-control": np.array([0.035, 0.005, 0.0]),
@@ -329,6 +336,9 @@ measurement_points = {
 }
 
 points = np.vstack(list(measurement_points.values()))
-values = evaluate_function(heat_problem.solution, points.T)
-print(values.real - 273.15)
+temperature_values = evaluate_function(heat_problem.solution, points.T).real
+temperature_values -= 273.15 # K -> °C
+
+for i, point_name in enumerate(measurement_points.keys()):
+    print(f"{point_name:17s}: {temperature_values[i,:][0]:.1f} °C")
 
