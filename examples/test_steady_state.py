@@ -165,7 +165,7 @@ f_heat = 0
 
 h = 5  # W / (m^2 K)
 
-TOL = 1e-8
+TOL = 1e-10
 #---------------------------------------------------------------------------------------------------#
 
 v_pull = 0 #4  # mm/min
@@ -295,19 +295,24 @@ heat_problem = Heat(Space_T)
 res_dir = "examples/results/"
 vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, res_dir + "steady_state_result.pvd", "w")
 
-for iteration in range(20):
+for iteration in range(15):
     print(f"Mesh update iteration {iteration}")
-    set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, em_problem.solution, f_heat, bcs_T, desired_temp=T_melt, interface=Interface.melt_crystal, facet_tags=facet_tags)
-    heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, em_problem.solution, f_heat)
-    heat_problem.assemble(heat_form, bcs_T)
+    with dolfinx.common.Timer("~Heat Scaling"):
+        set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, em_problem.solution, f_heat, bcs_T, desired_temp=T_melt, interface=Interface.melt_crystal, facet_tags=facet_tags)
+    
+    with dolfinx.common.Timer("~Heat Problem"):
+        heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, em_problem.solution, f_heat)
+        heat_problem.assemble(heat_form, bcs_T)
 
-    _ = heat_problem.solve()
+        _ = heat_problem.solve()
 
-    displacement_function = interface_displacement(heat_problem.solution, T_melt, Volume, Boundary, Surface, Interface, cell_tags, facet_tags)
+    with dolfinx.common.Timer("~Interface Displacement"):
+        displacement_function = interface_displacement(heat_problem.solution, T_melt, Volume, Boundary, Surface, Interface, cell_tags, facet_tags)
 
-    fields = [heat_problem.solution, em_problem.solution,displacement_function]
-    output_fields = [sol._cpp_object for sol in fields]
-    vtk.write_function(output_fields, iteration)
+    with dolfinx.common.Timer("~IO"):
+        fields = [heat_problem.solution, em_problem.solution,displacement_function]
+        output_fields = [sol._cpp_object for sol in fields]
+        vtk.write_function(output_fields, iteration)
     
     T_melt_function = dolfinx.fem.Constant(
         mesh, PETSc.ScalarType(T_melt)
@@ -322,7 +327,12 @@ for iteration in range(20):
     mesh_move(mesh, displacement_function)
 vtk.close()
 
-print()
+#####################################################################################################
+#                                                                                                   #
+#                                      MEASUREMENTS                                                 #
+#                                                                                                   #
+#####################################################################################################
+
 print(f"Heat scaling: {heat_problem._heat_scaling:.4f}")
 print(f"Electric current: {current * np.sqrt(heat_problem._heat_scaling):.1f} ")
 print(f"pulling velocity: {v_pull} m/s")
@@ -342,3 +352,28 @@ temperature_values -= 273.15 # K -> °C
 for i, point_name in enumerate(measurement_points.keys()):
     print(f"{point_name:17s}: {temperature_values[i,:][0]:.1f} °C")
 
+print()
+#####################################################################################################
+#                                                                                                   #
+#                                     OUTPUT TIMERS                                                 #
+#                                                                                                   #
+#####################################################################################################
+
+t_heat_scaling = MPI.COMM_WORLD.gather(dolfinx.common.timing("~Heat Scaling"), root=0)
+t_heat_problem = MPI.COMM_WORLD.gather(dolfinx.common.timing("~Heat Problem"), root=0)
+t_interface_displacement = MPI.COMM_WORLD.gather(dolfinx.common.timing("~Interface Displacement"), root=0)
+io_time = MPI.COMM_WORLD.gather(dolfinx.common.timing("~IO"), root=0)
+
+if MPI.COMM_WORLD.rank == 0:
+    print("Iteration-step breakdown")
+
+    for step_name, step_time in zip(["Heat Scaling", "Heat Problem", "Interface Displacement", "IO"], [t_heat_scaling, t_heat_problem, t_interface_displacement, io_time]):
+        step_arr = np.asarray(step_time)
+        print(step_arr)
+        time_per_run = step_arr[:, 1] / step_arr[:, 0]
+        print(step_arr[:, 1])
+        print(step_arr[:, 0])
+        print(time_per_run)
+        print(f"{step_name}: Total time: {np.sum(time_per_run):.3f} s, Min time: {np.min(time_per_run):.3f} s, Max time: {np.max(time_per_run):.3f} s")
+
+print()
