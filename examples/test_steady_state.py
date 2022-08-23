@@ -325,14 +325,11 @@ for iteration in range(20):
     print(f"L2-Error: {error:.2e}\n")
     if error < TOL:
         print(f"Error on interface is sufficiently small. \nIteration loop is stopped.\n")
-        # break
-    if error > old_error + TOL:
+    elif error > old_error + TOL:
         print("Error is increasing. \nBreak solving loop!\n")
         exit()
-        break
-    if (old_error - error) < TOL:
+    elif (old_error - error) < TOL:
         print("Error not decreasing. \nBreak solving loop!\n")
-        # break
         
 
     old_error = error

@@ -111,13 +111,17 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
     threshold_function_tol = 1e-4
     interface_computation_tol = threshold_function_tol
     #---------------------------------------------------------------------------------------------------#
+    
+    threshold_function_melt = lambda value: value < (T_melt - threshold_function_tol)
+    threshold_function_crystal = lambda value: value > (T_melt + threshold_function_tol)
+
+    #---------------------------------------------------------------------------------------------------#
     # calculate displacement on melt crystal interface 
 
     # move wrong dofs in melt
-    threshold_function = lambda value: value < (T_melt - threshold_function_tol)
 
-    marked_dofs = dofs_with_threshold(function, melt, cell_tags, threshold_function)
-    old_interface_coordinates_melt, new_interface_coordinates_melt, moved_dofs_melt, interface_computation_tol = get_new_interface_coordinates(function, T_melt, marked_dofs, interface, melt, facet_tags, cell_tags, threshold_function, interface_computation_tol)
+    marked_dofs = dofs_with_threshold(function, melt, cell_tags, threshold_function_melt)
+    old_interface_coordinates_melt, new_interface_coordinates_melt, moved_dofs_melt = get_new_interface_coordinates(function, T_melt, marked_dofs, interface, melt, facet_tags, cell_tags, [threshold_function_melt, threshold_function_crystal], interface_computation_tol)
     # moved_interface = project_graphs(old_interface_coordinates, new_interface_coordinates, melt)
     # moved_interface = project_graphs_new(old_interface_coordinates, new_interface_coordinates, melt)
     # moved_interface_melt = moved_interface
@@ -139,11 +143,11 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
     #         loc.setArray(values)
 
     #---------------------------------------------------------------------------------------------------#
-    # move wrong dofs in crystal
-    threshold_function = lambda value: value > (T_melt + threshold_function_tol)
 
-    marked_dofs = dofs_with_threshold(function, crystal, cell_tags, threshold_function)
-    old_interface_coordinates_crystal, new_interface_coordinates_crystal, moved_dofs_crystal, interface_computation_tol = get_new_interface_coordinates(function, T_melt, marked_dofs, interface, crystal, facet_tags, cell_tags, threshold_function, interface_computation_tol)
+    # move wrong dofs in crystal
+
+    marked_dofs = dofs_with_threshold(function, crystal, cell_tags, threshold_function_crystal)
+    old_interface_coordinates_crystal, new_interface_coordinates_crystal, moved_dofs_crystal = get_new_interface_coordinates(function, T_melt, marked_dofs, interface, crystal, facet_tags, cell_tags, [threshold_function_crystal, threshold_function_melt], interface_computation_tol)
     # # moved_interface = project_graphs(old_interface_coordinates, new_interface_coordinates, crystal)
     # moved_interface = project_graphs_new(old_interface_coordinates, new_interface_coordinates, crystal)
     # moved_interface_crystal = moved_interface
@@ -300,12 +304,9 @@ def dofs_with_threshold(function, volume, cell_tags, threshold_function):
         function.function_space, 2, volume_cells
     )
 
-    with function.vector.localForm() as loc:
-        local_Values = loc.getValues(dofs_volume).real
-    
-    return dofs_volume[threshold_function(local_Values)]
+    return dofs_volume[threshold_function(function.x.array[dofs_volume].real)]
 
-def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volume, facet_tags, cell_tags, threshold_function, tolarance):
+def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volume, facet_tags, cell_tags, threshold_functions, tolarance):
     TOL = tolarance
     volume_cells = cell_tags.indices[
         cell_tags.values == volume.value
@@ -342,7 +343,7 @@ def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volu
     value_space = dolfinx.fem.FunctionSpace(function.function_space.mesh, ("CG",1))
     values = dolfinx.fem.Function(value_space)
     values.interpolate(function)
-    function_values = values.vector.array.real
+    function_values = values.x.array.real
         
     coordinates = function.function_space.mesh.geometry.x
     threshold = T_melt
@@ -354,103 +355,44 @@ def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volu
         # check if all dofs are from the subset
         if np.all(np.in1d(dofs, dofs_volume)):
             values = function_values[dofs].reshape(-1,)
-            if (min_tol := np.min(abs(values-threshold))) < TOL:
-                print(f"Change Tolarance from {TOL} to {min_tol/2}.")
-                TOL = min_tol/2.0
+            
             # Check if the interface is cutting the cell
-            if bool(any([val > threshold + TOL for val in values]) * any([val < threshold - TOL for val in values])):
-                threshold_function_bool = threshold_function(values)
+            if bool(any(threshold_functions[0](values)) * any(threshold_functions[1](values))):
+                threshold_function_bool_violation = threshold_functions[0](values)
+                threshold_function_bool_no_violation = threshold_functions[1](values)
                 coordinates_of_dofs = coordinates[dofs]
 
-                violation_values = values[threshold_function_bool]
-                violation_coordinates = coordinates_of_dofs[threshold_function_bool]
+                violation_values = values[threshold_function_bool_violation]
+                violation_coordinates = coordinates_of_dofs[threshold_function_bool_violation]
 
-                no_violation_values = values[~threshold_function_bool]
-                no_violation_coordinates = coordinates_of_dofs[~threshold_function_bool]
+                no_violation_values = values[threshold_function_bool_no_violation]
+                no_violation_coordinates = coordinates_of_dofs[threshold_function_bool_no_violation]
                 
-                for v_value, v_coord in zip(violation_values, violation_coordinates):
-                    for n_v_value, n_v_coord  in zip(no_violation_values, no_violation_coordinates):
-                        new_coord = n_v_coord + (threshold - n_v_value) / (v_value - n_v_value) * (
-                            v_coord - n_v_coord
-                        )
-                        if new_coord[0] < 0.0:
-                            # print(n_v_coord, (threshold - n_v_value), (v_value - n_v_value), (threshold - n_v_value) / (v_value - n_v_value) , v_coord - n_v_coord)
-                            print(threshold, violation_values, no_violation_values)
-                            exit()
-                        interface_coords.append(new_coord)
+                if bool(any(threshold_function_bool_violation * threshold_function_bool_no_violation)):
+                    print(threshold_function_bool_violation, threshold_function_bool_no_violation)
+                    print(violation_values, no_violation_values)
+                    exit()
 
+                if len(violation_values) + len(no_violation_values) == 3:
+
+                    for v_value, v_coord in zip(violation_values, violation_coordinates):
+                        for n_v_value, n_v_coord  in zip(no_violation_values, no_violation_coordinates):
+                            new_coord = n_v_coord + (threshold - n_v_value) / (v_value - n_v_value) * (
+                                v_coord - n_v_coord
+                            )
+                            if new_coord[0] < 0.0:
+                                # print(n_v_coord, (threshold - n_v_value), (v_value - n_v_value), (threshold - n_v_value) / (v_value - n_v_value) , v_coord - n_v_coord)
+                                print(threshold, violation_values-threshold, no_violation_values-threshold)
+                                print(TOL)
+                                print(abs(violation_values-threshold)>TOL, abs(no_violation_values-threshold)>TOL)
+                                exit()
+                            print(violation_values, no_violation_values)
+                            print(abs(violation_values-threshold), abs(no_violation_values-threshold))
+                            print()
+                            interface_coords.append(new_coord)
 
     interface_coords = np.array(interface_coords).reshape(-1,3)
     
-
-
-    # mesh = function.function_space.mesh
-    # tdim = mesh.topology.dim
-    # num_cells = mesh.topology.index_map(tdim).size_local
-    # h_min = dolfinx.cpp.mesh.h(mesh, tdim, range(num_cells)).min()
-    # decimals = np.int(abs(np.round(np.log10(h_min))) + 1)
-
-    # # if len(interface_coords) != 0:
-    # #     x_round = np.round(interface_coords[:,0], decimals=decimals)
-    # #     _, indices = np.unique(x_round, return_index=True)
-    # #     interface_coords = interface_coords[indices]
-    
-    # if not interface_coords.size == 0: 
-    #     interface_coords = interface_coords[np.argsort(interface_coords[:, 0])]
-    #     interface_diff = np.linalg.norm(
-    #         np.diff(interface_coords, axis= 0),
-    #         axis=1
-    #     )
-    #     # print(interface_diff.shape)
-    #     # print(interface_coords.shape)
-    #     # print(interface_coords[1::,:].shape)
-    #     interface_coords = np.vstack(
-    #         (
-    #             interface_coords[0,:],
-    #             interface_coords[1::,:][interface_diff > h_min**2]
-    #         )
-    #     )
-    
-    # if (len(dofs_to_move_on_interface) and len(interface_coords)) > 0:
-    #     old_interface_coordinates = coordinates[dofs_to_move_on_interface]
-    #     min_x_coord_on_old_interface = old_interface_coordinates[:,0].min()
-    #     max_x_coord_on_old_interface = old_interface_coordinates[:,0].max()
-
-    #     if not np.isclose(max_x_coord_on_old_interface, interface_coords[-1, 0] , atol = h_min/2):
-    #         interface_coords = interface_coords[:-1,:] # TODO: Why is this needed? 
-
-    # print(interface_coords)
-    # print(interface_coords.shape)
-    # print(marked_dofs.shape)
-    # exit()    
-        
-
-    # if interface_coords.shape[0] > 1:
-    #     print(interface_coords[1:,:]-interface_coords[:-1,:])
-    
-    # if (len(dofs_to_move_on_interface) and len(interface_coords)) > 0:
-    #     old_interface_coordinates = coordinates[dofs_to_move_on_interface]
-    #     min_x_coord_on_old_interface = old_interface_coordinates[:,0].min()
-    #     max_x_coord_on_old_interface = old_interface_coordinates[:,0].max()
-
-    #     if not np.isclose(min_x_coord_on_old_interface, interface_coords[0, 0], atol= h_min/2):
-    #         interface_coords = interface_coords[1:,:]
-    #         print("First out")
-    #     if len(interface_coords) > 0:
-    #         if not np.isclose(max_x_coord_on_old_interface, interface_coords[-1, 0] , atol = h_min/2):
-    #             interface_coords = interface_coords[:-1,:]
-    #             print("Last out")
-    #     if len(interface_coords) == 0:
-    #         interface_coords = []
-
-
-    # if interface_coords != []:
-    #     fig, ax = plt.subplots(1,1)
-    #     p_interface, = ax.plot(interface_coords[:,0], interface_coords[:,1], '--go')
-    #     p_coordinates, = ax.plot(coordinates[dofs_to_move_on_interface][:,0], coordinates[dofs_to_move_on_interface][:,1], '--r^')
-    #     ax.legend([p_interface, p_coordinates], ["Interface", "Coordinates"])
-    #     ax.set_xlim([0.0, 0.004])
-    #     fig.savefig(f"interface_coordinates_{volume.name}.png")
     return coordinates[dofs_to_move_on_interface], interface_coords, dofs_to_move_on_interface
 
 def calculate_graph_coordinates(coordinates):
