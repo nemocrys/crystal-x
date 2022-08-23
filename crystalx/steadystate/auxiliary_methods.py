@@ -181,11 +181,15 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
     #---------------------------------------------------------------------------------------------------#
     print("old_interface_coordinates")
     print(old_interface_coordinates_melt.shape, old_interface_coordinates_crystal.shape, unmoved_coordinates.shape)
-    old_interface_coordinates = np.concatenate((old_interface_coordinates_melt, old_interface_coordinates_crystal, unmoved_coordinates))
+    # old_interface_coordinates = np.concatenate((old_interface_coordinates_melt, old_interface_coordinates_crystal, unmoved_coordinates))
+    old_interface_coordinates = np.concatenate((old_interface_coordinates_melt, old_interface_coordinates_crystal))
+
     print(old_interface_coordinates.shape, dofs_interface.shape)
+    
     print("new_interface_coordinates")
     print(new_interface_coordinates_melt.shape, new_interface_coordinates_crystal.shape, unmoved_coordinates.shape)
-    new_interface_coordinates = np.concatenate((new_interface_coordinates_melt, new_interface_coordinates_crystal, unmoved_coordinates))
+    # new_interface_coordinates = np.concatenate((new_interface_coordinates_melt, new_interface_coordinates_crystal, unmoved_coordinates))
+    new_interface_coordinates = np.concatenate((new_interface_coordinates_melt, new_interface_coordinates_crystal))
     print(new_interface_coordinates.shape, dofs_interface.shape)
     #---------------------------------------------------------------------------------------------------#
 
@@ -205,8 +209,10 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
         displacement = moved_interface - old_interface_coordinates
         with displacement_function.vector.localForm() as loc:
             values = loc.getArray()
-            values[2 * dofs_interface] = displacement[:,0]
-            values[2 * dofs_interface + 1] = displacement[:,1]
+            # values[2 * dofs_interface] = displacement[:,0]
+            # values[2 * dofs_interface + 1] = displacement[:,1]
+            values[2 * moved_dofs] = displacement[:,0]
+            values[2 * moved_dofs + 1] = displacement[:,1]
             loc.setArray(values)
     # #---------------------------------------------------------------------------------------------------#
     # if moved_interface_crystal != [] and moved_interface_melt != []:
@@ -386,9 +392,9 @@ def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volu
                                 print(TOL)
                                 print(abs(violation_values-threshold)>TOL, abs(no_violation_values-threshold)>TOL)
                                 exit()
-                            print(violation_values, no_violation_values)
-                            print(abs(violation_values-threshold), abs(no_violation_values-threshold))
-                            print()
+                            # print(violation_values, no_violation_values)
+                            # print(abs(violation_values-threshold), abs(no_violation_values-threshold))
+                            # print()
                             interface_coords.append(new_coord)
 
     interface_coords = np.array(interface_coords).reshape(-1,3)

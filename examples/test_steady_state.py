@@ -321,13 +321,21 @@ for iteration in range(20):
         mesh, PETSc.ScalarType(T_melt)
     ) 
 
-    error = np.sqrt(MPI.COMM_WORLD.allreduce(dolfinx.fem.assemble_scalar(dolfinx.fem.form((heat_problem.solution - T_melt_function)**2 * dI(Interface.melt_crystal.value))), op=MPI.SUM)).real
-    print(f"L2-Error: {error:.2e}\n")
+    error_L2 = np.sqrt(MPI.COMM_WORLD.allreduce(dolfinx.fem.assemble_scalar(dolfinx.fem.form((heat_problem.solution - T_melt_function)**2 * dI(Interface.melt_crystal.value))), op=MPI.SUM)).real
+    print(f"L2-Error: {error_L2:.2e}\n")
+    
+    interface_facets = facet_tags.find(Interface.melt_crystal.value)
+    interface_dofs = dolfinx.fem.locate_dofs_topological(heat_problem.solution.function_space, 1, interface_facets)
+    error_max = np.max(abs(heat_problem.solution.x.array[interface_dofs]-T_melt))
+    print(f"Max-Error: {error_max:.2e}\n")
+
+    error = error_L2
+
     if error < TOL:
         print(f"Error on interface is sufficiently small. \nIteration loop is stopped.\n")
     elif error > old_error + TOL:
         print("Error is increasing. \nBreak solving loop!\n")
-        exit()
+        # exit()
     elif (old_error - error) < TOL:
         print("Error not decreasing. \nBreak solving loop!\n")
         
