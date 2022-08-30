@@ -311,10 +311,6 @@ def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volu
 
                 no_violation_values = values[threshold_function_bool_no_violation]
                 no_violation_coordinates = coordinates_of_dofs[threshold_function_bool_no_violation]
-                
-                if bool(any(threshold_function_bool_violation * threshold_function_bool_no_violation)):
-                    print("error") #TODO
-                    exit()
 
                 if len(violation_values) + len(no_violation_values) == 3:
 
