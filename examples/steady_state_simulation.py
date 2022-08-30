@@ -1,15 +1,9 @@
 """
+Use the dockerfile provided in the repository 
 Run with dolfinx using Docker:
-docker run -it --mount type=bind,source="$(pwd)",target=/root nemocrys/dolfinx:2021.10.22
-docker start -i nemocrys
-docker exec -it nemocrys bash
+docker run --rm -it --mount type=bind,source="$(pwd)",target=/root nemocrys/dolfinx:2022.08.16
 
-install additional stuff
-
-pip3 install objectgmsh
 source /usr/local/bin/dolfinx-complex-mode
-
-TODO create own Dockerfile for all this
 
 by M. Schröder, A. Enders-Seidlitz, B. E. Abali, K. Dadzis
 """
