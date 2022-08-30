@@ -1,0 +1,20 @@
+IO:
+  Material Data: "examples/materials/materials.yml"
+  Results: "examples/results/"
+
+Problem:
+  Error Tolerance: 1.e-10
+  Maximum Iterations: 25
+  Error Type: "L2" # Options: "L2", "max"
+
+Induction:
+  Frequency: 13.5e+3 #Hz
+  Current: 100 #A
+
+Heat:
+  Ambient Temperature: 293.15 #K
+  Heat Source: 0.0
+  Pulling Velocity: 0.0 # mm/min
+
+Interface:
+  Interface Tolerance: 1.e-10

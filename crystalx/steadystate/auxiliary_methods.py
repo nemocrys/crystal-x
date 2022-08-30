@@ -13,9 +13,9 @@ from .equations.laplace import Laplace
 #                                     TEMPERATURE SCALING                                           #
 #                                                                                                   #
 #####################################################################################################
+# Calculate the scaling of the current, needed to fit temperature at triplepoint
+def set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, var_epsilon, v_pull,  T_amb, A, f_heat, material_data, bcs_T, desired_temp, interface, facet_tags):
 
-def set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat, bcs_T, desired_temp, interface, facet_tags):
-    
     interface_facets = facet_tags.find(
         interface.value
     )
@@ -39,7 +39,7 @@ def set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigm
         
         heat_problem._heat_scaling = temp_scaling
 
-        heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
+        heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, var_epsilon, v_pull,  T_amb, A, f_heat, material_data)
         heat_problem.assemble(heat_form, bcs_T) 
         heat_problem.solve()
 
@@ -61,8 +61,8 @@ def set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigm
 #                                      MESH MOVEMENT                                                #
 #                                                                                                   #
 #####################################################################################################
-
-def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interface, cell_tags, facet_tags):
+# Solves the mesh movement problem, with global smoothing of the interface displacement
+def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interface, cell_tags, facet_tags, TOL):
     melt = Volume.melt
     crystal = Volume.crystal
     interface = Interface.melt_crystal
@@ -107,13 +107,11 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
     #---------------------------------------------------------------------------------------------------#
     # set function for displacement on melt-crystal interface
     displacement_function = dolfinx.fem.Function(Space_MM)
-    
-    threshold_function_tol = 1e-4
-    interface_computation_tol = threshold_function_tol
+
     #---------------------------------------------------------------------------------------------------#
     
-    threshold_function_melt = lambda value: value < (T_melt - threshold_function_tol)
-    threshold_function_crystal = lambda value: value > (T_melt + threshold_function_tol)
+    threshold_function_melt = lambda value: value < (T_melt - TOL)
+    threshold_function_crystal = lambda value: value > (T_melt + TOL)
 
     #---------------------------------------------------------------------------------------------------#
     # calculate displacement on melt crystal interface 
@@ -121,14 +119,13 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
     # move wrong dofs in melt
 
     marked_dofs = dofs_with_threshold(function, melt, cell_tags, threshold_function_melt)
-    old_interface_coordinates_melt, new_interface_coordinates_melt, moved_dofs_melt = get_new_interface_coordinates(function, T_melt, marked_dofs, interface, melt, facet_tags, cell_tags, [threshold_function_melt, threshold_function_crystal], interface_computation_tol)
+    old_interface_coordinates_melt, new_interface_coordinates_melt, moved_dofs_melt = get_new_interface_coordinates(function, T_melt, marked_dofs, interface, melt, facet_tags, cell_tags, [threshold_function_melt, threshold_function_crystal], TOL)
 
     #---------------------------------------------------------------------------------------------------#
-
     # move wrong dofs in crystal
 
     marked_dofs = dofs_with_threshold(function, crystal, cell_tags, threshold_function_crystal)
-    old_interface_coordinates_crystal, new_interface_coordinates_crystal, moved_dofs_crystal = get_new_interface_coordinates(function, T_melt, marked_dofs, interface, crystal, facet_tags, cell_tags, [threshold_function_crystal, threshold_function_melt], interface_computation_tol)
+    old_interface_coordinates_crystal, new_interface_coordinates_crystal, moved_dofs_crystal = get_new_interface_coordinates(function, T_melt, marked_dofs, interface, crystal, facet_tags, cell_tags, [threshold_function_crystal, threshold_function_melt], TOL)
     
     #---------------------------------------------------------------------------------------------------#
     
@@ -236,10 +233,11 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
 
     return laplace_problem.solution
 
+# Moves mesh nodes according to a given displacement vector
 def mesh_move(mesh, displacement):
     mesh.geometry.x[:, :mesh.geometry.dim] += displacement.x.array.reshape((-1, mesh.geometry.dim)).real
 
-
+# Returns the dofs in an subdomain that fullfill a threshold_function
 def dofs_with_threshold(function, volume, cell_tags, threshold_function):
     # Get the dofs from a volume/subset which satisfy some threshold function
     volume_cells = cell_tags.indices[
@@ -252,8 +250,8 @@ def dofs_with_threshold(function, volume, cell_tags, threshold_function):
 
     return dofs_volume[threshold_function(function.x.array[dofs_volume].real)]
 
-def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volume, facet_tags, cell_tags, threshold_functions, tolarance):
-    TOL = tolarance
+# Calculate the coordinates of the new interface
+def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volume, facet_tags, cell_tags, threshold_functions, TOL):
     volume_cells = cell_tags.indices[
         cell_tags.values == volume.value
     ]
@@ -331,6 +329,7 @@ def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volu
     
     return coordinates[dofs_to_move_on_interface], interface_coords, dofs_to_move_on_interface
 
+# Maps global coordinates to an Intervall [0,1]
 def calculate_graph_coordinates(coordinates):
     """
     Parameterize the graph with specific graph coordinates $\tau \in \left[0,1 \right]$
@@ -356,6 +355,7 @@ def calculate_graph_coordinates(coordinates):
 
     return tau[inverse_permutation]
 
+# Projects old interface on new interface by mapping relative graph coordinates
 def project_graph(old_coordinates, new_coordinates):
     """
     Project the old graph on the new graph by their specific graph coordinate.
@@ -396,6 +396,7 @@ def project_graph(old_coordinates, new_coordinates):
 #                                                                                                   #
 #####################################################################################################
 
+# Evalute function at given points
 def evaluate_function(function, points):
     bb_tree = dolfinx.geometry.BoundingBoxTree(function.function_space.mesh, function.function_space.mesh.topology.dim)
 
