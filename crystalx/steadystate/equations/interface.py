@@ -31,7 +31,7 @@ class Stefan:
         N = ufl.FacetNormal(V.function_space.mesh)
         a = (
             ufl.inner(ufl.avg(self._d_V), ufl.avg(self.test_function)) 
-        ) * 2*pi*self._r*  dI(Interface.melt_crystal.value) # Need to use trial function here for bilinear form
+        ) * 2*pi*self._r*  dI(Interface.melt_crystal.value)
 
         L = (1.0 / latent_heat * 
             ufl.inner(ufl.jump(ufl.inner(kappa * ufl.grad(T), N)), ufl.avg(self.test_function)) 

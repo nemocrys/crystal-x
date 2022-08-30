@@ -9,7 +9,7 @@ from numpy import pi
 from geometry.geometry import Volume, Interface, Surface, Boundary
 
 class Heat:
-    def __init__(self, V) -> None:
+    def __init__(self, V, v_pull) -> None:
         # trial function 
         self._d_T = ufl.TrialFunction(V)
         # test function
@@ -20,7 +20,9 @@ class Heat:
         # radial coordinate
         self._r = ufl.SpatialCoordinate(V.mesh)[0]
 
-        self._heat_scaling = 2.76661542784358 # Value from Steady state
+        self._heat_scaling = 0.0
+
+        self._v_pull = v_pull
 
     @property
     def solution(self):
@@ -47,7 +49,6 @@ class Heat:
         with open("examples/materials/materials.yml") as f:
             mat_data = yaml.safe_load(f)
 
-
         sigma_sb = 5.670374419e-8
         for vol, surf in zip([Volume.axis_top, Volume.seed ,Volume.crystal, Volume.melt, Volume.melt, Volume.crucible, Volume.insulation, Volume.adapter, Volume.axis_bottom, Volume.inductor], [Surface.axis_top, Surface.seed, Surface.crystal, Surface.meniscus,Surface.melt_flat, Surface.crucible, Surface.insulation, Surface.adapter, Surface.axis_bottom, Surface.inductor]):
             eps = mat_data[vol.material]["Emissivity"]
@@ -59,10 +60,8 @@ class Heat:
                 * 2*pi*self._r* dI(surf.value)
             )
 
-        # TODO additional heat source for phase boundary
-        v_pull = 4  # mm/min
-        v_pull *= 1.6666666e-5  # m/s
-        latent_heat_value = mat_data["tin-solid"]["Latent Heat"] * mat_data["tin-liquid"]["Density"] * v_pull  # W/m^2 #TODO: WRONG !!! v_growth is needed and is not uniform!!!!
+        # Additional heat source for phase boundary
+        latent_heat_value = mat_data["tin-solid"]["Latent Heat"] * mat_data["tin-liquid"]["Density"] * self._v_pull
     
         Form_T += (
             ufl.inner(-latent_heat_value, self._test_function("+")) 
@@ -77,7 +76,6 @@ class Heat:
         self._problem_T = dolfinx.fem.petsc.NonlinearProblem(Form,  self._solution, bcs, J=Gain_T)
 
     def solve(self):
-        #Implement nonlinear solver myself: https://fenicsproject.discourse.group/t/non-linear-solver/4499/2
 
         solver_T = dolfinx.nls.petsc.NewtonSolver(MPI.COMM_WORLD,  self._problem_T)
         # TODO set proper parameters
@@ -86,13 +84,9 @@ class Heat:
         solver_T.convergence_criterion = "incremental"
         # parameters copied from https://jorgensd.github.io/dolfinx-tutorial/chapter2/hyperelasticity.html
 
-        # from dolfinx.log import set_log_level, LogLevel
-        # set_log_level(LogLevel.INFO)
-
         n, converged = solver_T.solve(self._solution)
         self._solution.x.scatter_forward()
 
         assert(converged)
-        # print(f"Number of interations: {n:d}")
 
         return self._solution

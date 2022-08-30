@@ -283,7 +283,7 @@ bcs_T = [dolfinx.fem.dirichletbc(value_T, dofs_T)]
 
 #---------------------------------------------------------------------------------------------------#
 
-heat_problem = Heat(Space_T)
+heat_problem = Heat(Space_T, v_pull)
  
 
 #####################################################################################################
@@ -333,12 +333,13 @@ for iteration in range(20):
 
     if error < TOL:
         print(f"Error on interface is sufficiently small. \nIteration loop is stopped.\n")
+        break
     elif error > old_error + TOL:
         print("Error is increasing. \nBreak solving loop!\n")
-        # exit()
+        break
     elif (old_error - error) < TOL:
         print("Error not decreasing. \nBreak solving loop!\n")
-        
+        break  
 
     old_error = error
     
@@ -370,28 +371,3 @@ temperature_values -= 273.15 # K -> °C
 for i, point_name in enumerate(measurement_points.keys()):
     print(f"{point_name:17s}: {temperature_values[i,:][0]:.1f} °C")
 
-print()
-#####################################################################################################
-#                                                                                                   #
-#                                     OUTPUT TIMERS                                                 #
-#                                                                                                   #
-#####################################################################################################
-
-t_heat_scaling = MPI.COMM_WORLD.gather(dolfinx.common.timing("~Heat Scaling"), root=0)
-t_heat_problem = MPI.COMM_WORLD.gather(dolfinx.common.timing("~Heat Problem"), root=0)
-t_interface_displacement = MPI.COMM_WORLD.gather(dolfinx.common.timing("~Interface Displacement"), root=0)
-io_time = MPI.COMM_WORLD.gather(dolfinx.common.timing("~IO"), root=0)
-
-if MPI.COMM_WORLD.rank == 0:
-    print("Iteration-step breakdown")
-
-    for step_name, step_time in zip(["Heat Scaling", "Heat Problem", "Interface Displacement", "IO"], [t_heat_scaling, t_heat_problem, t_interface_displacement, io_time]):
-        step_arr = np.asarray(step_time)
-        print(step_arr)
-        time_per_run = step_arr[:, 1] / step_arr[:, 0]
-        print(step_arr[:, 1])
-        print(step_arr[:, 0])
-        print(time_per_run)
-        print(f"{step_name}: Total time: {np.sum(time_per_run):.3f} s, Min time: {np.min(time_per_run):.3f} s, Max time: {np.max(time_per_run):.3f} s")
-
-print()

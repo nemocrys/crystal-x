@@ -43,7 +43,6 @@ class Maxwell:
 
     def assemble(self, Form, bcs):
         
-        # TODO what is Re(A), Im(A)
         Gain_A = ufl.derivative(Form,  self._solution,  self._d_A)
 
         self._problem_EM = dolfinx.fem.petsc.NonlinearProblem(Form,  self._solution, bcs, J=Gain_A)
