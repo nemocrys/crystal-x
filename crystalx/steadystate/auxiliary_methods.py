@@ -2,7 +2,7 @@ import dolfinx
 import ufl
 
 import numpy as np
-from scipy import optimize
+from scipy import optimize, interpolate
 from petsc4py import PETSc
 
 import matplotlib.pyplot as plt
@@ -13,9 +13,9 @@ from .equations.laplace import Laplace
 #                                     TEMPERATURE SCALING                                           #
 #                                                                                                   #
 #####################################################################################################
+# Calculate the scaling of the current, needed to fit temperature at triplepoint
+def set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, var_epsilon, v_pull,  T_amb, A, f_heat, material_data, bcs_T, desired_temp, interface, facet_tags):
 
-def set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat, bcs_T, desired_temp, interface, facet_tags):
-    
     interface_facets = facet_tags.find(
         interface.value
     )
@@ -39,7 +39,7 @@ def set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigm
         
         heat_problem._heat_scaling = temp_scaling
 
-        heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, h,  T_amb, A, f_heat)
+        heat_form = heat_problem.setup(heat_problem.solution, dV, dA, dI, rho, kappa, omega, varsigma, var_epsilon, v_pull,  T_amb, A, f_heat, material_data)
         heat_problem.assemble(heat_form, bcs_T) 
         heat_problem.solve()
 
@@ -61,8 +61,8 @@ def set_temperature_scaling(heat_problem, dV, dA, dI, rho, kappa, omega, varsigm
 #                                      MESH MOVEMENT                                                #
 #                                                                                                   #
 #####################################################################################################
-
-def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interface, cell_tags, facet_tags):
+# Solves the mesh movement problem, with global smoothing of the interface displacement
+def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interface, cell_tags, facet_tags, TOL):
     melt = Volume.melt
     crystal = Volume.crystal
     interface = Interface.melt_crystal
@@ -109,23 +109,49 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
     displacement_function = dolfinx.fem.Function(Space_MM)
 
     #---------------------------------------------------------------------------------------------------#
+    
+    threshold_function_melt = lambda value: value < (T_melt - TOL)
+    threshold_function_crystal = lambda value: value > (T_melt + TOL)
+
+    #---------------------------------------------------------------------------------------------------#
     # calculate displacement on melt crystal interface 
 
     # move wrong dofs in melt
-    threshold_function = lambda value: value <= T_melt
 
-    marked_dofs = dofs_with_threshold(function, melt, cell_tags, threshold_function)
-    old_interface_coordinates, new_interface_coordinates, moved_dofs = get_new_interface_coordinates(function, T_melt, marked_dofs, interface, melt, facet_tags, cell_tags, threshold_function)
-    moved_interface = project_graphs(old_interface_coordinates, new_interface_coordinates, melt)
-    moved_interface_melt = moved_interface
+    marked_dofs = dofs_with_threshold(function, melt, cell_tags, threshold_function_melt)
+    old_interface_coordinates_melt, new_interface_coordinates_melt, moved_dofs_melt = get_new_interface_coordinates(function, T_melt, marked_dofs, interface, melt, facet_tags, cell_tags, [threshold_function_melt, threshold_function_crystal], TOL)
+
+    #---------------------------------------------------------------------------------------------------#
+    # move wrong dofs in crystal
+
+    marked_dofs = dofs_with_threshold(function, crystal, cell_tags, threshold_function_crystal)
+    old_interface_coordinates_crystal, new_interface_coordinates_crystal, moved_dofs_crystal = get_new_interface_coordinates(function, T_melt, marked_dofs, interface, crystal, facet_tags, cell_tags, [threshold_function_crystal, threshold_function_melt], TOL)
+    
+    #---------------------------------------------------------------------------------------------------#
+    
+    moved_dofs = np.concatenate((moved_dofs_melt, moved_dofs_crystal))
+
+    #---------------------------------------------------------------------------------------------------#
 
     interface_facets = facet_tags.find(
         interface.value
     )
 
     dofs_interface = dolfinx.fem.locate_dofs_topological(
-        function.function_space, 1, interface_facets
+        Space_MM, 1, interface_facets
     )
+    
+    unmoved_dofs = np.setxor1d(dofs_interface, moved_dofs)
+    unmoved_coordinates = Space_MM.mesh.geometry.x[unmoved_dofs].reshape(-1,3)
+    #---------------------------------------------------------------------------------------------------#
+
+    old_interface_coordinates = np.concatenate((old_interface_coordinates_melt, old_interface_coordinates_crystal))
+
+    new_interface_coordinates = np.concatenate((new_interface_coordinates_melt, new_interface_coordinates_crystal))
+    
+    #---------------------------------------------------------------------------------------------------#
+
+    moved_interface = project_graph(old_interface_coordinates, new_interface_coordinates)
 
     if moved_interface != []:
         displacement = moved_interface - old_interface_coordinates
@@ -134,34 +160,6 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
             values[2 * moved_dofs] = displacement[:,0]
             values[2 * moved_dofs + 1] = displacement[:,1]
             loc.setArray(values)
-
-    #---------------------------------------------------------------------------------------------------#
-    # move wrong dofs in crystal
-    threshold_function = lambda value: value > T_melt
-
-    marked_dofs = dofs_with_threshold(function, crystal, cell_tags, threshold_function)
-    old_interface_coordinates, new_interface_coordinates, moved_dofs = get_new_interface_coordinates(function, T_melt, marked_dofs, interface, crystal, facet_tags, cell_tags, threshold_function)
-    moved_interface = project_graphs(old_interface_coordinates, new_interface_coordinates, crystal)
-    moved_interface_crystal = moved_interface
-
-    if moved_interface != []:
-        displacement = moved_interface - old_interface_coordinates
-        with displacement_function.vector.localForm() as loc:
-            values = loc.getArray()
-            values[2 * moved_dofs] = displacement[:,0]
-            values[2 * moved_dofs + 1] = displacement[:,1]
-            loc.setArray(values)
-
-    #---------------------------------------------------------------------------------------------------#
-    if moved_interface_crystal != [] and moved_interface_melt != []:
-        fig, ax = plt.subplots(1,1)
-        p_moved_melt, = ax.plot(moved_interface_melt[:, 0], moved_interface_melt[:, 1], '--go')
-        p_moved_crystal, = ax.plot(moved_interface_crystal[:, 0], moved_interface_crystal[:, 1], '--ro')
-        # p_old, = ax.plot(old_coordinates[:,0],old_coordinates[:,1], '--r^')
-        # ax.set_aspect('equal', 'box')
-        ax.legend([p_moved_melt, p_moved_crystal], ["Melt", "Crystal"])
-        ax.set_xlim([0.0, 0.004])
-        fig.savefig(f"interface_combined.png")
 
     #---------------------------------------------------------------------------------------------------#
     # set displacement as dirichlet BC
@@ -202,6 +200,7 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
             Surface.melt_flat.value
     )
     #---------------------------------------------------------------------------------------------------#
+
     dirichlet_facets = np.concatenate([sourrounding_facets, crucible_surface_facets, crystal_surface_facets, meniscus_surface_facets, melt_flat_surface_facets])
 
     dofs_hom_dirichlet = dolfinx.fem.locate_dofs_topological(
@@ -234,10 +233,11 @@ def interface_displacement(function, T_melt, Volume, Boundary, Surface, Interfac
 
     return laplace_problem.solution
 
+# Moves mesh nodes according to a given displacement vector
 def mesh_move(mesh, displacement):
     mesh.geometry.x[:, :mesh.geometry.dim] += displacement.x.array.reshape((-1, mesh.geometry.dim)).real
 
-
+# Returns the dofs in an subdomain that fullfill a threshold_function
 def dofs_with_threshold(function, volume, cell_tags, threshold_function):
     # Get the dofs from a volume/subset which satisfy some threshold function
     volume_cells = cell_tags.indices[
@@ -248,13 +248,10 @@ def dofs_with_threshold(function, volume, cell_tags, threshold_function):
         function.function_space, 2, volume_cells
     )
 
-    with function.vector.localForm() as loc:
-        local_Values = loc.getValues(dofs_volume).real
-    
-    return dofs_volume[threshold_function(local_Values)]
+    return dofs_volume[threshold_function(function.x.array[dofs_volume].real)]
 
-def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volume, facet_tags, cell_tags, threshold_function):
-    
+# Calculate the coordinates of the new interface
+def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volume, facet_tags, cell_tags, threshold_functions, TOL):
     volume_cells = cell_tags.indices[
         cell_tags.values == volume.value
     ]
@@ -290,8 +287,8 @@ def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volu
     value_space = dolfinx.fem.FunctionSpace(function.function_space.mesh, ("CG",1))
     values = dolfinx.fem.Function(value_space)
     values.interpolate(function)
-    function_values = values.vector.array.real
-
+    function_values = values.x.array.real
+        
     coordinates = function.function_space.mesh.geometry.x
     threshold = T_melt
 
@@ -302,98 +299,37 @@ def get_new_interface_coordinates(function, T_melt, marked_dofs, interface, volu
         # check if all dofs are from the subset
         if np.all(np.in1d(dofs, dofs_volume)):
             values = function_values[dofs].reshape(-1,)
+            
             # Check if the interface is cutting the cell
-            if bool(any([val >= threshold for val in values]) * any([val < threshold for val in values])):
-                threshold_function_bool = threshold_function(values)
+            if bool(any(threshold_functions[0](values)) * any(threshold_functions[1](values))):
+                threshold_function_bool_violation = threshold_functions[0](values)
+                threshold_function_bool_no_violation = threshold_functions[1](values)
                 coordinates_of_dofs = coordinates[dofs]
 
-                violation_values = values[threshold_function_bool]
-                violation_coordinates = coordinates_of_dofs[threshold_function_bool]
+                violation_values = values[threshold_function_bool_violation]
+                violation_coordinates = coordinates_of_dofs[threshold_function_bool_violation]
 
-                no_violation_values = values[~threshold_function_bool]
-                no_violation_coordinates = coordinates_of_dofs[~threshold_function_bool]
+                no_violation_values = values[threshold_function_bool_no_violation]
+                no_violation_coordinates = coordinates_of_dofs[threshold_function_bool_no_violation]
                 
-                for v_value, v_coord in zip(violation_values, violation_coordinates):
-                    for n_v_value, n_v_coord  in zip(no_violation_values, no_violation_coordinates):
-                        new_coord = n_v_coord + (threshold - n_v_value) / (v_value - n_v_value) * (
-                            v_coord - n_v_coord
-                        )
-                        interface_coords.append(new_coord)
+                if bool(any(threshold_function_bool_violation * threshold_function_bool_no_violation)):
+                    print("error") #TODO
+                    exit()
+
+                if len(violation_values) + len(no_violation_values) == 3:
+
+                    for v_value, v_coord in zip(violation_values, violation_coordinates):
+                        for n_v_value, n_v_coord  in zip(no_violation_values, no_violation_coordinates):
+                            new_coord = n_v_coord + (threshold - n_v_value) / (v_value - n_v_value) * (
+                                v_coord - n_v_coord
+                            )
+                            interface_coords.append(new_coord)
+
+    interface_coords = np.array(interface_coords).reshape(-1,3)
     
-
-    interface_coords = np.array(interface_coords)
-    
-
-
-    mesh = function.function_space.mesh
-    tdim = mesh.topology.dim
-    num_cells = mesh.topology.index_map(tdim).size_local
-    h_min = dolfinx.cpp.mesh.h(mesh, tdim, range(num_cells)).min()
-    decimals = np.int(abs(np.round(np.log10(h_min))) + 1)
-
-    # if len(interface_coords) != 0:
-    #     x_round = np.round(interface_coords[:,0], decimals=decimals)
-    #     _, indices = np.unique(x_round, return_index=True)
-    #     interface_coords = interface_coords[indices]
-    
-    if not interface_coords.size == 0: 
-        interface_coords = interface_coords[np.argsort(interface_coords[:, 0])]
-        interface_diff = np.linalg.norm(
-            np.diff(interface_coords, axis= 0),
-            axis=1
-        )
-        # print(interface_diff.shape)
-        # print(interface_coords.shape)
-        # print(interface_coords[1::,:].shape)
-        interface_coords = np.vstack(
-            (
-                interface_coords[0,:],
-                interface_coords[1::,:][interface_diff > h_min**2]
-            )
-        )
-    
-    if (len(dofs_to_move_on_interface) and len(interface_coords)) > 0:
-        old_interface_coordinates = coordinates[dofs_to_move_on_interface]
-        min_x_coord_on_old_interface = old_interface_coordinates[:,0].min()
-        max_x_coord_on_old_interface = old_interface_coordinates[:,0].max()
-
-        if not np.isclose(max_x_coord_on_old_interface, interface_coords[-1, 0] , atol = h_min/2):
-            interface_coords = interface_coords[:-1,:] # TODO: Why is this needed?
-
-    # print(interface_coords)
-    # print(interface_coords.shape)
-    # print(marked_dofs.shape)
-    # exit()    
-        
-
-    # if interface_coords.shape[0] > 1:
-    #     print(interface_coords[1:,:]-interface_coords[:-1,:])
-    
-    # if (len(dofs_to_move_on_interface) and len(interface_coords)) > 0:
-    #     old_interface_coordinates = coordinates[dofs_to_move_on_interface]
-    #     min_x_coord_on_old_interface = old_interface_coordinates[:,0].min()
-    #     max_x_coord_on_old_interface = old_interface_coordinates[:,0].max()
-
-    #     if not np.isclose(min_x_coord_on_old_interface, interface_coords[0, 0], atol= h_min/2):
-    #         interface_coords = interface_coords[1:,:]
-    #         print("First out")
-    #     if len(interface_coords) > 0:
-    #         if not np.isclose(max_x_coord_on_old_interface, interface_coords[-1, 0] , atol = h_min/2):
-    #             interface_coords = interface_coords[:-1,:]
-    #             print("Last out")
-    #     if len(interface_coords) == 0:
-    #         interface_coords = []
-
-
-    if interface_coords != []:
-        fig, ax = plt.subplots(1,1)
-        p_interface, = ax.plot(interface_coords[:,0], interface_coords[:,1], '--go')
-        p_coordinates, = ax.plot(coordinates[dofs_to_move_on_interface][:,0], coordinates[dofs_to_move_on_interface][:,1], '--r^')
-        ax.legend([p_interface, p_coordinates], ["Interface", "Coordinates"])
-        ax.set_xlim([0.0, 0.004])
-        fig.savefig(f"interface_coordinates_{volume.name}.png")
     return coordinates[dofs_to_move_on_interface], interface_coords, dofs_to_move_on_interface
 
+# Maps global coordinates to an Intervall [0,1]
 def calculate_graph_coordinates(coordinates):
     """
     Parameterize the graph with specific graph coordinates $\tau \in \left[0,1 \right]$
@@ -419,70 +355,62 @@ def calculate_graph_coordinates(coordinates):
 
     return tau[inverse_permutation]
 
-def project_graphs(old_coordinates, new_coordinates, volume):
+# Projects old interface on new interface by mapping relative graph coordinates
+def project_graph(old_coordinates, new_coordinates):
     """
     Project the old graph on the new graph by their specific graph coordinate.
     """
     moved_coordinates = []
+    if len(new_coordinates) >= 2:
+        old_permutation = np.argsort(old_coordinates[:, 0])
+        new_permutation = np.argsort(new_coordinates[:, 0])
 
-    if new_coordinates != []:
-        dim = old_coordinates.shape[1]
+        inverse_permutation = np.empty(old_permutation.size, dtype=np.int32)
+        for i in np.arange(old_permutation.size):
+            inverse_permutation[old_permutation[i]] = i
         
+        # permutate coordinates so that taus are in ascending order
+        old_coordinates = old_coordinates[old_permutation]
+        new_coordinates = new_coordinates[new_permutation]
+
         old_taus = calculate_graph_coordinates(old_coordinates)
         new_taus = calculate_graph_coordinates(new_coordinates)
 
-        permutation = np.argsort(new_coordinates[:, 0])
-        
-        # permutate coordinates so that taus are in ascending order
-        permutated_coordinates = new_coordinates#new_coordinates[permutation]
-        new_taus = new_taus#new_taus[permutation]
+        tau_to_x = interpolate.interp1d(new_taus, new_coordinates[:,0])
+        tau_to_y = interpolate.interp1d(new_taus, new_coordinates[:,1])
 
-        # create piecewise linear function for the coordinate
-        cond_list = [np.isclose(old_taus, 0.0)]
-        for i in range(len(new_taus) - 2):
-            cond_list.append(
-                np.logical_and(
-                    new_taus[i] < old_taus, 
-                    old_taus <= new_taus[i + 1]
-                )
-            )
-        
-        cond_list.append(np.isclose(old_taus, 1.0))
+        new_x = tau_to_x(old_taus)
+        new_y = tau_to_y(old_taus)
 
-        for j in range(dim):
-            func_list = [permutated_coordinates[0, j] * np.ones(len(old_taus))]
+        moved_coordinates = np.zeros((old_taus.shape[0], 3))
+        moved_coordinates[:, 0] = new_x
+        moved_coordinates[:, 1] = new_y
 
-            for i in range(len(new_taus) - 2):
-                func_list.append(
-                    permutated_coordinates[i, j]
-                    + (permutated_coordinates[i + 1, j] - permutated_coordinates[i, j]) * (old_taus - new_taus[i]) / (new_taus[i + 1] - new_taus[i])
-                )
-
-            func_list.append(permutated_coordinates[-1, j] * np.ones(len(old_taus)))
-
-            moved_coordinates.append(np.select(cond_list, func_list, default=np.inf))
-
-        moved_coordinates = np.array(moved_coordinates)
-
-        moved_coordinates = moved_coordinates.T
-
-        # TODO: Not good, but I don#t find the problem why condlist fails.
-        if len([moved_coordinates[:,0] == np.inf]) > 0:
-            moved_coordinates[moved_coordinates[:,0] == np.inf] = old_coordinates[moved_coordinates[:,0] == np.inf]
-
-        permutation = np.argsort(moved_coordinates[:, 0])
+        return moved_coordinates[inverse_permutation]
     
-        fig, ax = plt.subplots(1,1)
-        p_new, = ax.plot(new_coordinates[:, 0], new_coordinates[:, 1], '--go')
-        p_moved, = ax.plot(moved_coordinates[:, 0], moved_coordinates[:, 1], '--r^')
-        # p_old, = ax.plot(old_coordinates[:,0],old_coordinates[:,1], '--r^')
-        # ax.set_aspect('equal', 'box')
-        ax.legend([p_moved, p_new], ["Moved", "New"])
-        ax.set_xlim([0.0, 0.004])
-        fig.savefig(f"interface_displacement_{volume.name}.png")
-        
-        print(volume.name)
-        print(new_coordinates.shape[0]-old_coordinates.shape[1])
-        print(new_coordinates.shape[0]-moved_coordinates.shape[0])
+    return []
 
-    return moved_coordinates
+#####################################################################################################
+#                                                                                                   #
+#                                   FUNCTION EVALUATION                                             #
+#                                                                                                   #
+#####################################################################################################
+
+# Evalute function at given points
+def evaluate_function(function, points):
+    bb_tree = dolfinx.geometry.BoundingBoxTree(function.function_space.mesh, function.function_space.mesh.topology.dim)
+
+    cells = []
+    points_on_proc = []
+    # Find cells whose bounding-box collide with the the points
+    cell_candidates = dolfinx.geometry.compute_collisions(bb_tree, points.T)
+    # Choose one of the cells that contains the point
+    colliding_cells = dolfinx.geometry.compute_colliding_cells(function.function_space.mesh, cell_candidates, points.T)
+    for i, point in enumerate(points.T):
+        if len(colliding_cells.links(i))>0:
+            points_on_proc.append(point)
+            cells.append(colliding_cells.links(i)[0])
+    
+    points_on_proc = np.array(points_on_proc, dtype=np.float64)
+     
+    return function.eval(points_on_proc, cells)
