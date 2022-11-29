@@ -26,7 +26,7 @@ class Maxwell:
     def test_function(self):
         return self._test_function
 
-    def setup(self, A, dV, dA, dI, mu, omega, varsigma, current_density):
+    def setup(self, A, dV, dA, dI, mu, omega, varsigma, current_density, inductor_tag):
         Form_A = (
             1
             / mu
@@ -37,7 +37,7 @@ class Maxwell:
                 # ufl.inner(A.dx(i), del_A.dx(i))
             )
             + 1j * omega * varsigma * ufl.inner(A,  self._test_function)
-        ) * 2*pi* self._r *dV - ufl.inner(current_density,  self._test_function) * 2*pi* self._r * dV(Volume.inductor.value)
+        ) * 2*pi* self._r *dV - ufl.inner(current_density,  self._test_function) * 2*pi* self._r * dV(inductor_tag)
 
         return Form_A
 

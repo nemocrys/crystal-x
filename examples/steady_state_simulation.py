@@ -1,7 +1,7 @@
 """
 Use the dockerfile provided in the repository 
 Run with dolfinx using Docker:
-docker run --rm -it --mount type=bind,source="$(pwd)",target=/root nemocrys/dolfinx:2022.08.16
+docker run -it --rm -v ${PWD}:/home/workdir nemocrys/dolfinx:v0.5.2 bash 
 
 source /usr/local/bin/dolfinx-complex-mode
 
@@ -71,7 +71,6 @@ model_rank = 0
 mesh, cell_tags, facet_tags = dolfinx.io.gmshio.model_to_mesh(
     gmsh_model, MPI.COMM_WORLD, model_rank, gdim=gdim
 )
-
 #####################################################################################################
 #                                                                                                   #
 #                                   SETTING FUNCTION SPACES                                         #
@@ -240,7 +239,7 @@ with value_A.vector.localForm() as loc:  # according to https://jorgensd.github.
 bcs_A = [dolfinx.fem.dirichletbc(value_A, dofs_A)]
 
 em_problem = Maxwell(Space_A)
-em_form = em_problem.setup(em_problem.solution, dV, dA, dI, mu, omega, varsigma, current_density)
+em_form = em_problem.setup(em_problem.solution, dV, dA, dI, mu, omega, varsigma, current_density, Volume.inductor.value)
 em_problem.assemble(em_form, bcs_A)
 em_problem.solve()
 

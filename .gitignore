@@ -245,8 +245,8 @@ documentation/html/*
 documentation/latex/*
 
 # Results
-*/results/
-results/
+results*/
+
 
 
 .bash_history

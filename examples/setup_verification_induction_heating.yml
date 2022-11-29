@@ -1,0 +1,14 @@
+# geometry
+height: 0.05  # height of the domain # l
+graphite_r: 0.06  # radius of graphite cylinder # r_cyl
+coil_r_i: 0.07  # inner radius of coil # r_i
+coil_d: 0.01  # coil winding diameter
+air_size_factor: 10  # times (coil_r_i + coil_d)
+mesh_size_factor: 1  # global refinement / coarsening
+# current source
+frequency: 13.5e+3  # HZ
+current: 300 # 3 windings with 100 a in experiment
+# electric conductivity
+varsigma_graphite: 5.88e+4  # S / m
+# permeability of vacuum
+mu_0: 1.25663706e-6  # V s / (A m)
