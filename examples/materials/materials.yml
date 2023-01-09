@@ -22,12 +22,6 @@ graphite-CZ3R6300:  # crucible, adapter
   Heat Conductivity: 65  # 20°C
   Heat Transfer: 5.0 # W / (m^2 K)
   Permeability:  1.25663706e-6 #V s/(A m)
-graphite-FU8957:  # heater
-  Density: 1750.0
-  Emissivity: 0.81  # 250°C
-  Heat Capacity: 1237.0
-  Heat Conductivity: 105  # averaged over different given values
-  Permeability:  1.25663706e-6 #V s/(A m)
 insulation:
   Density: 220.0
   Electric Conductivity: 1.95e+2
@@ -45,22 +39,20 @@ steel-1.4541:
 tin-liquid:
   Density: 6980.0
   Electric Conductivity: 2.08e+6
-  Emissivity: 0.064  # set equal to solid
+  Emissivity: 0.1  # set equal to solid
   Heat Capacity: 252.7
-  Heat Conductivity: 29.0
-  Heat Transfer: 5.0 # W / (m^2 K)
+  Heat Conductivity: 62  # effective value, real is 29.0
+  Heat Transfer: 10.0 # W / (m^2 K)
   Permeability:  1.25663706e-6 #V s/(A m)
-  Liquid: 'Logical True'
   Surface Tension: 0.56
   Beta: 10  # Deg
 tin-solid:
   Density: 7179.0
   Electric Conductivity: 4.38e+6
-  Emissivity: 0.064
+  Emissivity: 0.1
   Heat Capacity: 244.0
   Heat Conductivity: 60.0
-  Heat Transfer: 5.0 # W / (m^2 K)
+  Heat Transfer: 10.0 # W / (m^2 K)
   Permeability:  1.25663706e-6 #V s/(A m)
-  Solid: 'Logical True'
   Melting Point: 505.
   Latent Heat: 5.96e+4  # J / kg
