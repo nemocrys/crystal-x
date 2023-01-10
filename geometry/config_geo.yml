@@ -50,7 +50,7 @@ melt:
   material: tin-liquid
 seed:
   r: 0.0009  # estimated
-  l: 0.004  # estimated
+  l: 0.04  # estimated
   T_init: 420
   material: tin-solid
 surrounding:  # vessel inner dimensions
