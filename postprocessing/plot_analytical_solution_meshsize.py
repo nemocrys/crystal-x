@@ -60,7 +60,7 @@ for directory in directories:
     heating_rms= 1/sigma *(j/2**0.5)**2
     r = df['Points:0'].to_numpy()
     line, = ax.plot(r * 1000, heating_rms/1e6)
-    line.set_label("$h_{max} = " + directory.split("_")[2].split("=")[1] + "$")
+    line.set_label(f"$h_{{max}} = {float(directory.split('_')[2].split('=')[1])*10}$ mm")
     print(f"Deviation at r_max {directory}: {(w.max() - heating_rms.max())/ w.max() * 100}%")
     deviation_from_analytical.append((w.max() - heating_rms.max())/ w.max() * 100)
     mesh_sizes.append(float(directory.split("_")[2].split("=")[1]))
@@ -107,7 +107,7 @@ for directory in directories:
     power = heating_rms/1e6
     filter = radius >= r_zoom
     line, = ax2.plot(radius[filter], power[filter])
-    line.set_label("$h_{max} = " + directory.split("_")[2].split("=")[1] + "$")
+    line.set_label(f"$h_{{max}} = {float(directory.split('_')[2].split('=')[1])*10}$ mm")
 
 # ax2.legend()
 # ax2.set_xlabel( 'radius [mm]')
