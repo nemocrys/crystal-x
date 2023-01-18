@@ -148,6 +148,9 @@ scalar_element = lambda degree: ufl.FiniteElement(
 # Function Space for Maxwell Equation
 Space_A = dolfinx.fem.FunctionSpace(mesh, scalar_element(degree=1))  # A
 
+# Function Space for Heat Equation
+Space_T = dolfinx.fem.FunctionSpace(mesh, scalar_element(degree=1))  # T
+
 #####################################################################################################
 #                                                                                                   #
 #                                       PARAMETERS                                                  #
@@ -175,20 +178,37 @@ varsigma = dolfinx.fem.Function(Q, name="varsigma")
 # permeability
 mu = dolfinx.fem.Function(Q, name="mu")
 
+# heat conductivity
+kappa = dolfinx.fem.Function(Q, name="kappa")
+
+# density
+rho = dolfinx.fem.Function(Q, name="rho")
+
 #---------------------------------------------------------------------------------------------------#
 
-with varsigma.vector.localForm() as loc_varsigma, mu.vector.localForm() as loc_mu:
+with varsigma.vector.localForm() as loc_varsigma, mu.vector.localForm() as loc_mu, kappa.vector.localForm() as loc_kappa, rho.vector.localForm() as loc_rho:
     for vol in [coil, air]:
         cells = cell_tags.find(vol.ph_id)
         loc_varsigma.setValues(
             cells, np.full(len(cells), 0)
         )
+        loc_kappa.setValues(
+            cells, np.full(len(cells), 0)
+        )
+        loc_rho.setValues(
+            cells, np.full(len(cells), 1)
+        )
     cells = cell_tags.find(cylinder.ph_id)
     loc_varsigma.setValues(
         cells, np.full(len(cells), config["varsigma_graphite"])
     )
+    loc_kappa.setValues(
+        cells, np.full(len(cells), config["kappa_graphite"])
+    )
+    loc_rho.setValues(
+        cells, np.full(len(cells), config["density_graphite"])
+    )
     loc_mu.set(config["mu_0"])
-
 #####################################################################################################
 #                                                                                                   #
 #                                 SOLVE MAXWELLS EQUATIONS                                          #
@@ -210,6 +230,69 @@ em_form = em_problem.setup(em_problem.solution, dV, dA, dI, mu, omega, varsigma,
 em_problem.assemble(em_form, bcs_A)
 em_problem.solve()
 
+
+
+
+#####################################################################################################
+#                                                                                                   #
+#                                 SOLVE HEAT EQUATION                                               #
+#                                                                                                   #
+#####################################################################################################
+
+T_amb = config["T_amb"]
+A = em_problem.solution
+r = ufl.SpatialCoordinate(Space_T.mesh)[0]
+T = dolfinx.fem.Function(Space_T, name="T")
+with T.vector.localForm() as loc:
+    loc.set(500)
+d_T = ufl.TrialFunction(Space_T)
+test_function = ufl.TestFunction(Space_T)
+Form_T = (
+    kappa * ufl.inner(ufl.grad(T), ufl.grad(test_function))
+    # - rho * ufl.inner(f, test_function)
+    - varsigma / 2 * omega ** 2 * ufl.inner(ufl.inner(A, A), test_function)
+) * 2*np.pi*r*  dV 
+
+# for vol, surf in zip([Volume.crystal, Volume.melt, Volume.melt, Volume.crucible], [Surface.crystal, Surface.meniscus,Surface.melt_flat, Surface.crucible]):
+h = config["htc_graphite"]
+Form_T += (
+    h
+    * ufl.inner((T("-")  - T_amb ), test_function("-"))
+    * 2*np.pi*r* dI(cylinder_surf.ph_id)
+)
+
+sigma_sb = 5.670374419e-8
+# for vol, surf in zip([Volume.axis_top, Volume.seed ,Volume.crystal, Volume.melt, Volume.melt, Volume.crucible, Volume.insulation, Volume.adapter, Volume.axis_bottom, Volume.inductor], [Surface.axis_top, Surface.seed, Surface.crystal, Surface.meniscus,Surface.melt_flat, Surface.crucible, Surface.insulation, Surface.adapter, Surface.axis_bottom, Surface.inductor]):
+eps = config["emissivity_graphite"]
+Form_T += (
+    sigma_sb
+    # * varepsilon("-") # It is important to choose the right side of the interface
+    * eps
+    * ufl.inner((T("-") ** 4 - T_amb ** 4), test_function("-"))
+    * 2*np.pi*r* dI(cylinder_surf.ph_id)
+)
+Gain_T = ufl.derivative(Form_T,  T,  d_T)
+problem_T = dolfinx.fem.petsc.NonlinearProblem(Form_T,  T, [], J=Gain_T)
+solver_T = dolfinx.nls.petsc.NewtonSolver(MPI.COMM_WORLD,  problem_T)
+# TODO set proper parameters
+solver_T.atol = 1e-8
+solver_T.rtol = 1e-8
+solver_T.convergence_criterion = "incremental"
+# parameters copied from https://jorgensd.github.io/dolfinx-tutorial/chapter2/hyperelasticity.html
+# update solver according to https://jsdokken.com/dolfinx-tutorial/chapter2/nonlinpoisson_code.html
+ksp = solver_T.krylov_solver
+opts = PETSc.Options()
+option_prefix = ksp.getOptionsPrefix()
+opts[f"{option_prefix}ksp_type"] = "cg"
+opts[f"{option_prefix}pc_type"] = "gamg"
+opts[f"{option_prefix}pc_factor_mat_solver_type"] = "mumps"
+ksp.setFromOptions()
+
+n, converged = solver_T.solve(T)
+assert(converged)
+T.x.scatter_forward()
+
+
 # vtk = dolfinx.io.VTKFile(MPI.COMM_WORLD, f"{wdir}/result.pvd", "w")
 # vtk.write_function(em_problem.solution, 0)
 # vtk.write_function(varsigma, 0)
@@ -218,4 +301,5 @@ with dolfinx.io.XDMFFile(MPI.COMM_WORLD, f"{wdir}/solution.xdmf", "w") as xdmf:
     xdmf.write_mesh(mesh)
     xdmf.write_function(em_problem.solution)
     xdmf.write_function(varsigma)
+    xdmf.write_function(T)
 

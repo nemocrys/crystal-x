@@ -10,5 +10,10 @@ frequency: 13.5e+3  # HZ
 current: 300 # 3 windings with 100 a in experiment
 # electric conductivity
 varsigma_graphite: 5.88e+4  # S / m
+density_graphite: 1730.0  # kg/m^3
+emissivity_graphite: 0.7
+kappa_graphite: 65  # W/(m K)
 # permeability of vacuum
 mu_0: 1.25663706e-6  # V s / (A m)
+T_amb: 300
+htc_graphite: 0
