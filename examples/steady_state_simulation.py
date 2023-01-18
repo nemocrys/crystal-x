@@ -308,7 +308,7 @@ for iteration in range(max_iter):
         displacement_function = interface_displacement(heat_problem.solution, T_melt, Volume, Boundary, Surface, Interface, cell_tags, facet_tags, setup_data["Interface"]["Interface Tolerance"])
 
     with dolfinx.common.Timer("~IO"):
-        fields = [heat_problem.solution, em_problem.solution,displacement_function]
+        fields = [heat_problem.solution, em_problem.solution, displacement_function, kappa, varsigma]
         output_fields = [sol._cpp_object for sol in fields]
         vtk.write_function(output_fields, iteration)
     
