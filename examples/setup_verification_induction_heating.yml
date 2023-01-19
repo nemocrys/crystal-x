@@ -16,4 +16,4 @@ kappa_graphite: 65  # W/(m K)
 # permeability of vacuum
 mu_0: 1.25663706e-6  # V s / (A m)
 T_amb: 300
-htc_graphite: 0
+htc_graphite: 10
