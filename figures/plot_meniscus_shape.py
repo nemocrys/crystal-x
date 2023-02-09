@@ -1,6 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
+
+plt.rcParams.update({'font.size': 14})
+
 gamma = 0.56
 rho = 6980.0
 g = 9.81
