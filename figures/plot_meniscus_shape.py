@@ -19,7 +19,7 @@ x = l_c * (
     (4 - z**2/l_c**2)**0.5 - (4 - h**2/l_c**2)**0.5
 )
 fig, ax = plt.subplots(1, 1)
-plt.plot(x, z)
+plt.plot(x, z, "k")
 ax.set_ylim([0, 0.004])
 ax.axis("equal")
 ax.grid(linestyle=":")

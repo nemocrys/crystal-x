@@ -115,4 +115,4 @@ for directory in directories:
 fig2.tight_layout()
 fig2.savefig(f"{file_name}_zoom.svg")
 fig2.savefig(f"{file_name}_zoom.png")
-# plt.show()
+plt.show()
