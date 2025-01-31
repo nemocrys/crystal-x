@@ -10,11 +10,12 @@ The project is developed and maintained by the [**Model experiments group**](htt
 
 If you use this code in your research, please cite our article:
 
-> TODO
+> A. Enders-Seidlitz, B. E. Abali, and K. Dadzis, Multiphysics simulation of crystal growth with moving boundaries in FEniCS *Computer Methods in Applied Mechanics and Engineering*,  437 (2025) 117783. [https://doi.org/10.1016/j.cma.2025.117783](https://doi.org/10.1016/j.cma.2025.117783).
+
 ## Prerequisites
 crystal-x requires Python >= 3.10. and dolfinx version 0.5.0. Additionally, numpy, scipy, pyyaml, meshio and objectgmsh are required.
 
-The easiest way to run this code is to use the dockerfile provided in the repository.
+The easiest way to run this code is to use Docker with the dockerfile provided in the repository or the image provided [here](https://hub.docker.com/r/nemocrys/dolfinx).
 
 ## Usage
 The code is split into different submodules. The geometry is created in the geometry files. The weak forms are created in the [equations folder](https://github.com/nemocrys/crystal-x/tree/main/crystalx/steadystate/equations). Additionally, helper functions and the calculation of the interface are found in the [auxiliary methods file](https://github.com/nemocrys/crystal-x/blob/main/crystalx/steadystate/auxiliary_methods.py).
