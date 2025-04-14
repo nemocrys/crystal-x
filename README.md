@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/444350751.svg)](https://doi.org/10.5281/zenodo.15214366)
+
 # crystal-x
 
 ## Project description
